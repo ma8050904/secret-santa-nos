@@ -19,6 +19,8 @@ import {
   getAdminSafeState,
 } from "../src/lib/storage";
 
+import fs from "fs";
+
 let passedCount = 0;
 let failedCount = 0;
 
@@ -33,6 +35,11 @@ function assert(condition: boolean, testName: string, detail?: string) {
 }
 
 async function runTests() {
+  // Clean up any previous test state file for fresh isolated execution
+  if (process.env.STORAGE_FILE_PATH && fs.existsSync(process.env.STORAGE_FILE_PATH)) {
+    fs.rmSync(process.env.STORAGE_FILE_PATH, { force: true });
+  }
+
   console.log("\n========================================================");
   console.log("  🎄 SECRET SANTA – PIN AUTH & INTEGRITY VERIFICATION 🎄");
   console.log("========================================================\n");
