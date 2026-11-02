@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Malformed request payload" }, { status: 400 });
     }
 
-    const { participantId, pin, confirmPin } = body;
+    const { participantId, pin } = body;
 
     if (!participantId || typeof participantId !== "string") {
       return NextResponse.json({ success: false, error: "Participant ID is required" }, { status: 400 });
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await authenticateOrRegisterPin(participantId, pin, confirmPin);
+    const result = await authenticateOrRegisterPin(participantId, pin);
 
     if (!result.success) {
       return NextResponse.json(

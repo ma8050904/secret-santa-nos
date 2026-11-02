@@ -1,3 +1,4 @@
+import fs from "fs";
 import { PARTICIPANTS } from "../src/lib/constants";
 import {
   generateSecretSantaDerangement,
@@ -19,8 +20,6 @@ import {
   getAdminSafeState,
 } from "../src/lib/storage";
 
-import fs from "fs";
-
 let passedCount = 0;
 let failedCount = 0;
 
@@ -35,13 +34,13 @@ function assert(condition: boolean, testName: string, detail?: string) {
 }
 
 async function runTests() {
-  // Clean up any previous test state file for fresh isolated execution
+  // Clean up test file if isolated path specified
   if (process.env.STORAGE_FILE_PATH && fs.existsSync(process.env.STORAGE_FILE_PATH)) {
     fs.rmSync(process.env.STORAGE_FILE_PATH, { force: true });
   }
 
   console.log("\n========================================================");
-  console.log("  🎄 SECRET SANTA – PIN AUTH & INTEGRITY VERIFICATION 🎄");
+  console.log("  🎄 SECRET SANTA – AUDIT & INTEGRITY VERIFICATION 🎄");
   console.log("========================================================\n");
 
   // TEST 1: Participant List & Exact Names
@@ -73,19 +72,18 @@ async function runTests() {
   const allNamesMatch = expectedNames.every((name, idx) => actualNames[idx] === name);
   assert(allNamesMatch, "All 18 participant names match exact spelling and capitalization");
 
-  // TEST 2: Preserved Existing Assignments
-  console.log("\n--- 2. Preservation of Existing Draw & Storage ---");
+  // TEST 2: Preserved Existing Assignments & Active Event
+  console.log("\n--- 2. Draw State & Cryptographic Storage ---");
   const state = await getEventState();
   assert(state.participants.length === 18, "Storage file contains all 18 participants");
-  assert(state.status === "active", "Event draw remains in active status (not reset)");
+  assert(state.status === "active", "Event draw remains in active status");
 
-  // Verify that all 18 participants have an encryptedRecipient blob
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
   );
   assert(allHaveAssignments, "All 18 participants have valid encrypted assignments");
 
-  // TEST 3: Cryptographic PIN Hashing & Verification
+  // TEST 3: Cryptographic PIN Hashing & Salt Security
   console.log("\n--- 3. Cryptographic PIN Hashing & Salt Security ---");
   const testPin = "7492";
   const salt1 = generateRandomSalt();
@@ -98,65 +96,51 @@ async function runTests() {
   assert(verifyPin(testPin, hash1, salt1) === true, "Valid PIN verifies successfully");
   assert(verifyPin("0000", hash1, salt1) === false, "Incorrect PIN is rejected");
 
-  // TEST 4: First-Time PIN Establishment Experience
-  console.log("\n--- 4. First-Time PIN Setup Flow ---");
-  // Test with participant Qais Alhadeed (p1)
+  // TEST 4: Single-Field PIN Setup & Login
+  console.log("\n--- 4. Single-Field PIN Registration & Authentication ---");
   const p1 = state.participants.find((p) => p.id === "p1")!;
 
-  // Mismatched confirm PIN rejected
-  const mismatchResult = await authenticateOrRegisterPin("p1", "1234", "9999");
-  assert(!mismatchResult.success, "First-time setup with mismatched confirm PIN is rejected");
+  // Short PIN rejected
+  const shortResult = await authenticateOrRegisterPin("p1", "12");
+  assert(!shortResult.success, "PIN shorter than 4 characters is rejected");
 
-  // Missing confirm PIN rejected on first visit
-  const missingConfirmResult = await authenticateOrRegisterPin("p1", "1234", "");
-  assert(!missingConfirmResult.success, "First-time setup without confirmation is rejected");
+  // First-time registration with single PIN entry
+  const firstReg = await authenticateOrRegisterPin("p1", "5829");
+  assert(firstReg.success === true, "First-time participant establishes PIN with 1 field entry");
+  assert(firstReg.isNewRegistration === true, "Recognized as first-time registration");
 
-  // Clean first-time registration with matching PIN
-  const validRegisterResult = await authenticateOrRegisterPin("p1", "4826", "4826");
-  assert(validRegisterResult.success === true, "Participant can successfully establish their personal PIN");
-  assert(validRegisterResult.isNewRegistration === true, "Action flagged as new registration");
+  // Subsequent visit with SAME PIN
+  const returningLogin = await authenticateOrRegisterPin("p1", "5829");
+  assert(returningLogin.success === true, "Returning participant logs in with established PIN");
+  assert(returningLogin.isNewRegistration === false, "Recognized as returning participant");
 
-  // TEST 5: Subsequent Login with Same PIN
-  console.log("\n--- 5. Subsequent Login with Established PIN ---");
-  // Logging in again with the registered PIN
-  const loginSuccess = await authenticateOrRegisterPin("p1", "4826");
-  assert(loginSuccess.success === true, "Subsequent login with correct PIN succeeds");
-  assert(loginSuccess.isNewRegistration === false, "Action recognized as returning login");
+  // Subsequent visit with WRONG PIN
+  const wrongLogin = await authenticateOrRegisterPin("p1", "9999");
+  assert(!wrongLogin.success, "Login with wrong PIN is rejected");
 
-  // Logging in with WRONG PIN
-  const wrongPinLogin = await authenticateOrRegisterPin("p1", "9999");
-  assert(!wrongPinLogin.success, "Login with wrong PIN is rejected");
-  assert(
-    Boolean(wrongPinLogin.error?.includes("Authentication failed")),
-    "Generic error message does not leak registration status"
-  );
-
-  // TEST 6: Gift Reveal with PIN
-  console.log("\n--- 6. Reveal Experience & Idempotency ---");
-  // Reveal gift for Qais with wrong PIN
+  // TEST 5: Gift Reveal & Idempotency
+  console.log("\n--- 5. Reveal Experience & Idempotency ---");
   const badReveal = await revealRecipientWithPin("p1", "0000");
   assert(!badReveal.success, "Reveal attempt with incorrect PIN strictly blocked");
 
-  // Reveal gift for Qais with correct PIN
-  const goodReveal = await revealRecipientWithPin("p1", "4826");
+  const goodReveal = await revealRecipientWithPin("p1", "5829");
   assert(goodReveal.success === true, "Authorized participant reveals secret recipient");
-  assert(typeof goodReveal.recipientName === "string" && goodReveal.recipientName.length > 0, `Recipient revealed: ${goodReveal.recipientName}`);
+  assert(typeof goodReveal.recipientName === "string" && goodReveal.recipientName.length > 0, "Recipient revealed without leaking in logs");
   assert(Boolean(goodReveal.recipientName && goodReveal.recipientName !== p1.name), "Recipient is not the participant themselves");
 
-  // Revisit test
-  const revisitReveal = await revealRecipientWithPin("p1", "4826");
+  // Revisit
+  const revisitReveal = await revealRecipientWithPin("p1", "5829");
   assert(revisitReveal.success === true, "Participant can revisit their secret result");
   assert(revisitReveal.recipientName === goodReveal.recipientName, "Revisit returns identical recipient (no re-shuffle)");
   assert(revisitReveal.isFirstReveal === false, "Revisit correctly marked as subsequent visit");
 
-  // TEST 7: Cross-Participant Isolation
-  console.log("\n--- 7. Cross-Participant Isolation ---");
-  // Attempting to use Qais's PIN (4826) to reveal for Participant 2 (Mohammad Alshourati)
-  const crossReveal = await revealRecipientWithPin("p2", "4826");
+  // TEST 6: Cross-Participant Isolation
+  console.log("\n--- 6. Cross-Participant Isolation ---");
+  const crossReveal = await revealRecipientWithPin("p2", "5829");
   assert(!crossReveal.success, "Participant 1 PIN cannot unlock Participant 2's gift");
 
-  // TEST 8: Session Security
-  console.log("\n--- 8. Session Token Verification ---");
+  // TEST 7: Session Token Verification
+  console.log("\n--- 7. Session Security ---");
   const secretKey = "SantaSessionSecret2024Key!_SafeHolidayToken";
   const token = createSessionToken("p1", secretKey);
   const session = verifySessionToken(token, secretKey);
@@ -166,15 +150,15 @@ async function runTests() {
   const tamperedSession = verifySessionToken(tamperedToken, secretKey);
   assert(tamperedSession === null, "Tampered session token is rejected");
 
-  // TEST 9: Organizer-Blind Privacy Audit
-  console.log("\n--- 9. Organizer-Blind Privacy Audit ---");
+  // TEST 8: Organizer-Blind Privacy Audit
+  console.log("\n--- 8. Organizer-Blind Privacy Audit ---");
   const adminState = await getAdminSafeState();
   assert(adminState.totalParticipants === 18, "Organizer dashboard sees 18 participants");
 
   const leakedKeys = (adminState.participants as any[]).some(
     (p) => p.pin || p.pinHash || p.pinSalt || p.code || p.encryptedRecipient || p.recipientName
   );
-  assert(!leakedKeys, "CRITICAL SECURITY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
+  assert(!leakedKeys, "CRITICAL PRIVACY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
 
   // FINAL SUMMARY
   console.log("\n========================================================");

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 
-interface Snowflake {
+interface Flake {
   x: number;
   y: number;
   radius: number;
@@ -13,12 +13,19 @@ interface Snowflake {
   swayAmplitude: number;
   swaySpeed: number;
   swayOffset: number;
+  twinkleSpeed: number;
+  isForeground: boolean;
 }
 
 export const Snowfall: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
+    // Respect user's reduced motion preference
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -36,21 +43,29 @@ export const Snowfall: React.FC = () => {
 
     window.addEventListener("resize", handleResize);
 
-    const flakeCount = Math.min(80, Math.floor((width * height) / 12000));
-    const flakes: Snowflake[] = [];
+    // Multi-layered realistic flake population
+    const totalFlakes = Math.min(100, Math.floor((width * height) / 10000));
+    const flakes: Flake[] = [];
 
-    for (let i = 0; i < flakeCount; i++) {
+    for (let i = 0; i < totalFlakes; i++) {
+      const isForeground = i % 8 === 0; // 12% large foreground flakes
+      const radius = isForeground
+        ? Math.random() * 2.2 + 2.0
+        : Math.random() * 1.8 + 0.6;
+
       flakes.push({
         x: Math.random() * width,
         y: Math.random() * height,
-        radius: Math.random() * 2.5 + 0.8,
+        radius,
         density: Math.random() * 30 + 1,
-        opacity: Math.random() * 0.7 + 0.3,
-        speedY: Math.random() * 1.2 + 0.6,
-        speedX: Math.random() * 0.6 - 0.3,
-        swayAmplitude: Math.random() * 1.2 + 0.5,
-        swaySpeed: Math.random() * 0.02 + 0.01,
+        opacity: isForeground ? Math.random() * 0.5 + 0.4 : Math.random() * 0.6 + 0.2,
+        speedY: isForeground ? Math.random() * 1.4 + 0.8 : Math.random() * 0.8 + 0.4,
+        speedX: Math.random() * 0.4 - 0.2,
+        swayAmplitude: isForeground ? Math.random() * 1.8 + 0.8 : Math.random() * 1.0 + 0.3,
+        swaySpeed: Math.random() * 0.02 + 0.008,
         swayOffset: Math.random() * Math.PI * 2,
+        twinkleSpeed: Math.random() * 0.03 + 0.01,
+        isForeground,
       });
     }
 
@@ -66,22 +81,37 @@ export const Snowfall: React.FC = () => {
         flake.y += flake.speedY;
         flake.x += Math.sin(time * flake.swaySpeed + flake.swayOffset) * flake.swayAmplitude + flake.speedX;
 
-        // Wrap around
-        if (flake.y > height) {
-          flake.y = -5;
+        // Twinkle opacity oscillation
+        const dynamicOpacity = Math.max(
+          0.1,
+          Math.min(1, flake.opacity + Math.sin(time * flake.twinkleSpeed) * 0.15)
+        );
+
+        // Wrap around seamlessly
+        if (flake.y > height + 10) {
+          flake.y = -10;
           flake.x = Math.random() * width;
         }
-        if (flake.x > width) {
-          flake.x = 0;
-        } else if (flake.x < 0) {
-          flake.x = width;
+        if (flake.x > width + 10) {
+          flake.x = -10;
+        } else if (flake.x < -10) {
+          flake.x = width + 10;
         }
 
         ctx.beginPath();
         ctx.arc(flake.x, flake.y, flake.radius, 0, Math.PI * 2, false);
-        ctx.fillStyle = `rgba(255, 255, 255, ${flake.opacity})`;
-        ctx.shadowBlur = flake.radius > 2 ? 4 : 0;
-        ctx.shadowColor = "rgba(255, 255, 255, 0.8)";
+
+        if (flake.isForeground) {
+          // Soft golden/white glow on large foreground flakes
+          ctx.fillStyle = `rgba(254, 243, 199, ${dynamicOpacity})`;
+          ctx.shadowBlur = 6;
+          ctx.shadowColor = "rgba(254, 243, 199, 0.6)";
+        } else {
+          ctx.fillStyle = `rgba(255, 255, 255, ${dynamicOpacity})`;
+          ctx.shadowBlur = flake.radius > 1.5 ? 3 : 0;
+          ctx.shadowColor = "rgba(255, 255, 255, 0.4)";
+        }
+
         ctx.fill();
       }
 

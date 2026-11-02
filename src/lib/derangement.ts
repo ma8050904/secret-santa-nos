@@ -108,3 +108,35 @@ export function generateSecretSantaDerangement(
 
   return assignments;
 }
+
+/**
+ * Generates a derangement where NO participant receives the same recipient as in previousAssignments
+ * (Strict disjoint derangement condition: new[i] !== old[i] AND new[i] !== i for all i)
+ */
+export function generateDistinctDerangement(
+  participants: readonly ParticipantItem[],
+  previousAssignmentsMap?: Record<string, string>
+): AssignmentPair[] {
+  let attempts = 0;
+  const maxAttempts = 5000;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+    const pairs = generateSecretSantaDerangement(participants);
+
+    if (!previousAssignmentsMap || Object.keys(previousAssignmentsMap).length === 0) {
+      return pairs;
+    }
+
+    // Check that every participant receives a DIFFERENT recipient than before
+    const hasAnyPreviousMatch = pairs.some(
+      (p) => previousAssignmentsMap[p.giverId] && previousAssignmentsMap[p.giverId] === p.recipientId
+    );
+
+    if (!hasAnyPreviousMatch) {
+      return pairs;
+    }
+  }
+
+  throw new Error(`Could not generate distinct derangement after ${maxAttempts} attempts.`);
+}

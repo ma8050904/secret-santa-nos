@@ -205,13 +205,11 @@ export async function generateAssignments(force = false): Promise<{
 
 /**
  * Authenticates with an existing PIN or establishes a personal PIN on first visit.
- * CRITICAL SECURITY:
- * Never reveals whether another participant has already registered a PIN on failure.
+ * Single PIN entry: first visit sets the PIN, subsequent visits verify it.
  */
 export async function authenticateOrRegisterPin(
   participantId: string,
-  rawPin: string,
-  rawConfirmPin?: string
+  rawPin: string
 ): Promise<{
   success: boolean;
   error?: string;
@@ -234,21 +232,19 @@ export async function authenticateOrRegisterPin(
   }
 
   const pin = rawPin ? rawPin.trim() : "";
-  const confirmPin = rawConfirmPin ? rawConfirmPin.trim() : "";
 
-  // Universal authentication failure error message (prevents user enumeration & registration probing)
-  const genericAuthFailMsg =
-    "Authentication failed. Please verify your PIN. (If this is your first visit, please enter and confirm your chosen PIN in both fields).";
+  if (!pin) {
+    return {
+      success: false,
+      error: "Please enter your PIN.",
+    };
+  }
 
   // CASE 1: Participant has ALREADY established a PIN
   if (participant.pinHash && participant.pinSalt) {
-    if (!pin) {
-      return { success: false, error: genericAuthFailMsg };
-    }
-
     const isValid = verifyPin(pin, participant.pinHash, participant.pinSalt);
     if (!isValid) {
-      return { success: false, error: genericAuthFailMsg };
+      return { success: false, error: "Incorrect PIN. Please try again." };
     }
 
     // Decrypt recipient name using verified PIN
@@ -279,18 +275,10 @@ export async function authenticateOrRegisterPin(
   }
 
   // CASE 2: Participant is establishing their PIN for the FIRST TIME
-  // Require both fields to be present and match
-  if (!pin || !confirmPin || pin !== confirmPin) {
-    return {
-      success: false,
-      error: genericAuthFailMsg,
-    };
-  }
-
   if (pin.length < 4) {
     return {
       success: false,
-      error: "For your privacy, your PIN must be at least 4 characters long.",
+      error: "PIN must be at least 4 digits or characters.",
     };
   }
 
@@ -316,7 +304,7 @@ export async function authenticateOrRegisterPin(
     console.error("Failed to decrypt seed recipient during PIN establishment:", err);
     return {
       success: false,
-      error: "Could not initialize assignment with your PIN. Please contact the administrator.",
+      error: "Could not initialize assignment. Please try again.",
     };
   }
 
