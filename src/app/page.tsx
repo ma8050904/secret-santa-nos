@@ -1,17 +1,15 @@
 "use client";
 
-import React, { useEffect, useState, Suspense, useCallback } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { ArrowDown, Gift } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
 import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
-import { RegistrationBanner, RegistrationSessionData } from "@/components/RegistrationBanner";
 
 function SecretSantaApp() {
   const [participants, setParticipants] = useState<ParticipantItem[]>([]);
-  const [registrationSession, setRegistrationSession] = useState<RegistrationSessionData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,19 +22,6 @@ function SecretSantaApp() {
   const [revealedRecipient, setRevealedRecipient] = useState<string | undefined>(undefined);
   const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
   const [showRevealModal, setShowRevealModal] = useState(false);
-
-  // Load registration status
-  const fetchRegistrationStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/registration/status");
-      const data = await res.json();
-      if (res.ok && data.success && data.session) {
-        setRegistrationSession(data.session);
-      }
-    } catch {
-      // non-blocking
-    }
-  }, []);
 
   // Load participants directory
   const loadParticipants = async () => {
@@ -73,12 +58,7 @@ function SecretSantaApp() {
   useEffect(() => {
     loadParticipants();
     checkSession();
-    fetchRegistrationStatus();
-
-    // Poll registration status every 2 seconds
-    const interval = setInterval(fetchRegistrationStatus, 2000);
-    return () => clearInterval(interval);
-  }, [fetchRegistrationStatus]);
+  }, []);
 
   const scrollToParticipants = () => {
     const el = document.getElementById("participants-section");
@@ -110,8 +90,7 @@ function SecretSantaApp() {
     setRevealedRecipient(data.recipientName);
     setShowRevealModal(true);
 
-    // Refresh directory & registration status immediately
-    fetchRegistrationStatus();
+    // Refresh directory
     loadParticipants();
 
     if (data.isRevealed) {
@@ -191,12 +170,6 @@ function SecretSantaApp() {
           <div className="h-px flex-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
         </div>
 
-        {/* Supervised 1-at-a-time Registration Banner */}
-        <RegistrationBanner
-          session={registrationSession}
-          onRefresh={fetchRegistrationStatus}
-        />
-
         {/* =====================================================================
             PARTICIPANT SELECTION SECTION
            ===================================================================== */}
@@ -217,7 +190,6 @@ function SecretSantaApp() {
       {selectedForAuth && (
         <PinAuthModal
           participant={selectedForAuth}
-          session={registrationSession}
           onClose={() => setSelectedForAuth(null)}
           onSuccess={handleAuthSuccess}
         />
@@ -234,31 +206,16 @@ function SecretSantaApp() {
           initialIsRevealed={isCurrentlyRevealed}
           onClose={() => setShowRevealModal(false)}
           onLogout={handleLogout}
-          onRevealSuccess={handleRevealSuccess}
+          onRevealSuccess={() => handleRevealSuccess(activeParticipant.id)}
         />
       )}
-
-      {/* =====================================================================
-          CLEAN FESTIVE FOOTER
-         ===================================================================== */}
-      <footer className="relative z-20 border-t border-amber-500/15 bg-[#030e06] py-6 text-center text-xs text-emerald-300/50">
-        <p className="font-serif tracking-widest uppercase text-amber-300/80 text-xs">
-          Secret Santa 🎄
-        </p>
-      </footer>
     </div>
   );
 }
 
-export default function HomePage() {
+export default function Home() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center bg-[#05150d] text-amber-300">
-          <span className="text-3xl animate-bounce">🎁</span>
-        </div>
-      }
-    >
+    <Suspense fallback={<div className="min-h-screen bg-[#05150d]" />}>
       <SecretSantaApp />
     </Suspense>
   );

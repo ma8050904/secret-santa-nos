@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateOrRegisterPin } from "@/lib/storage";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
-import { setSessionCookie } from "@/lib/session";
+import { setSessionCookie, getSessionFromRequest } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,6 +34,18 @@ export async function POST(req: NextRequest) {
           remainingAttempts: 0,
         },
         { status: 429 }
+      );
+    }
+
+    // Prevent switching participant identity within an existing authenticated session
+    const existingSession = getSessionFromRequest(req);
+    if (existingSession && existingSession.participantId !== participantId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "An active session exists for another participant. Please log out first before switching accounts.",
+        },
+        { status: 403 }
       );
     }
 

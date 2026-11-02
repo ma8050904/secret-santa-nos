@@ -28,19 +28,6 @@ export interface StoredParticipant {
   encryptedWithPin?: boolean;
 }
 
-export interface RegistrationSession {
-  status: "not_started" | "active" | "paused" | "completed";
-  currentTurn: number; // 1 to 18
-  totalTurns: number; // 18
-  turnDurationSeconds: number; // 60
-  turnStartedAt: string | null;
-  turnExpiresAt: string | null;
-  pausedRemainingSeconds?: number | null;
-  activeParticipantId: string | null;
-  registeredCount: number;
-  updatedAt: string;
-}
-
 export interface EventState {
   version: number;
   status: "uninitialized" | "ready" | "active" | "closed";
@@ -48,7 +35,6 @@ export interface EventState {
   generatedAt: string | null;
   masterSalt: string;
   participants: StoredParticipant[];
-  registrationSession?: RegistrationSession;
 }
 
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
@@ -147,6 +133,7 @@ export async function getEventState(): Promise<EventState> {
           await put("secret-santa-event.json", data, {
             access: "private",
             addRandomSuffix: false,
+            allowOverwrite: true,
           });
         } catch {
           // ignore background seed error
@@ -190,6 +177,7 @@ export async function saveEventState(state: EventState): Promise<void> {
         await put("secret-santa-event.json", serialized, {
           access: "private",
           addRandomSuffix: false,
+          allowOverwrite: true,
         });
       } catch (blobErr) {
         console.error("Critical: Failed to save state to Vercel Blob:", blobErr);
@@ -339,44 +327,6 @@ export async function authenticateOrRegisterPin(
   }
 
   // CASE 2: Participant is establishing their PIN for the FIRST TIME
-  if (state.registrationSession) {
-    const session = state.registrationSession;
-    if (session.status === "paused") {
-      return {
-        success: false,
-        error: "Registration is currently paused by the organizer.",
-      };
-    }
-    if (session.status === "not_started") {
-      return {
-        success: false,
-        error: "Registration has not started yet. Please wait for the organizer to start the session.",
-      };
-    }
-    if (session.status === "completed") {
-      return {
-        success: false,
-        error: "The registration session has ended.",
-      };
-    }
-    // Check turn expiration
-    if (session.turnExpiresAt && Date.now() > new Date(session.turnExpiresAt).getTime()) {
-      await autoAdvanceRegistrationTurn(state);
-      return {
-        success: false,
-        error: "This 60-second registration window has expired. Please try again on the current turn.",
-      };
-    }
-    // Check if reserved for a specific participant
-    if (session.activeParticipantId && session.activeParticipantId !== participantId) {
-      const activeName = state.participants.find((p) => p.id === session.activeParticipantId)?.name || "another participant";
-      return {
-        success: false,
-        error: `This turn is currently reserved for ${activeName}.`,
-      };
-    }
-  }
-
   if (pin.length < 4) {
     return {
       success: false,
@@ -422,26 +372,6 @@ export async function authenticateOrRegisterPin(
   participant.pinSalt = pinSalt;
   participant.encryptedRecipient = newEncryptedRecipient;
   participant.encryptedWithPin = true;
-
-  // Immediately advance turn upon successful registration
-  if (state.registrationSession && state.registrationSession.status === "active") {
-    const remaining = state.participants.filter((p) => Boolean(p.pinHash) || p.id === participant.id);
-    const registeredCount = remaining.length;
-    state.registrationSession.registeredCount = registeredCount;
-
-    const stillUnregistered = state.participants.filter((p) => !p.pinHash && p.id !== participant.id);
-    if (stillUnregistered.length === 0) {
-      state.registrationSession.status = "completed";
-      state.registrationSession.activeParticipantId = null;
-    } else {
-      state.registrationSession.currentTurn += 1;
-      state.registrationSession.turnStartedAt = new Date().toISOString();
-      state.registrationSession.turnExpiresAt = new Date(Date.now() + state.registrationSession.turnDurationSeconds * 1000).toISOString();
-      state.registrationSession.pausedRemainingSeconds = null;
-      state.registrationSession.activeParticipantId = stillUnregistered[0].id;
-    }
-    state.registrationSession.updatedAt = new Date().toISOString();
-  }
 
   await saveEventState(state);
 
@@ -515,35 +445,6 @@ export async function revealRecipientWithPin(
 }
 
 /**
- * Internal helper to advance turn when 60s expires
- */
-async function autoAdvanceRegistrationTurn(state: EventState): Promise<void> {
-  if (!state.registrationSession) return;
-  const session = state.registrationSession;
-  const registeredCount = state.participants.filter((p) => Boolean(p.pinHash)).length;
-  session.registeredCount = registeredCount;
-
-  const remaining = state.participants.filter((p) => !p.pinHash);
-  if (remaining.length === 0) {
-    session.status = "completed";
-    session.activeParticipantId = null;
-  } else {
-    session.currentTurn += 1;
-    session.turnStartedAt = new Date().toISOString();
-    session.turnExpiresAt = new Date(Date.now() + session.turnDurationSeconds * 1000).toISOString();
-    session.pausedRemainingSeconds = null;
-
-    const currentIndex = session.activeParticipantId
-      ? remaining.findIndex((p) => p.id === session.activeParticipantId)
-      : -1;
-    const next = remaining[(currentIndex + 1) % remaining.length];
-    session.activeParticipantId = next ? next.id : null;
-  }
-  session.updatedAt = new Date().toISOString();
-  await saveEventState(state);
-}
-
-/**
  * Returns organizer safe view:
  * CRITICAL PRIVACY: Strictly omits encryptedRecipient, PINs, and hashes.
  */
@@ -552,19 +453,9 @@ export async function getAdminSafeState(): Promise<{
   createdAt: string;
   generatedAt: string | null;
   totalParticipants: number;
+  registeredCount: number;
   revealedCount: number;
   pendingCount: number;
-  registrationSession?: {
-    status: string;
-    currentTurn: number;
-    totalTurns: number;
-    turnDurationSeconds: number;
-    timeRemainingSeconds: number;
-    registeredCount: number;
-    activeParticipantId: string | null;
-    activeParticipantName: string | null;
-    isPaused: boolean;
-  };
   participants: {
     id: string;
     name: string;
@@ -573,18 +464,18 @@ export async function getAdminSafeState(): Promise<{
     isRegistered: boolean;
   }[];
 }> {
-  const sessionStatus = await getRegistrationSessionStatus();
   const state = await getEventState();
   const revealedCount = state.participants.filter((p) => p.isRevealed).length;
+  const registeredCount = state.participants.filter((p) => Boolean(p.pinHash)).length;
 
   return {
     status: state.status,
     createdAt: state.createdAt,
     generatedAt: state.generatedAt,
     totalParticipants: state.participants.length,
+    registeredCount,
     revealedCount,
     pendingCount: state.participants.length - revealedCount,
-    registrationSession: sessionStatus.session,
     // Strictly omit PINs, hashes, codes, and recipient mappings
     participants: state.participants.map((p) => ({
       id: p.id,
@@ -594,227 +485,4 @@ export async function getAdminSafeState(): Promise<{
       isRegistered: Boolean(p.pinHash),
     })),
   };
-}
-
-/**
- * Returns sanitized real-time registration session status (auto-advancing expired turns)
- */
-export async function getRegistrationSessionStatus(): Promise<{
-  success: boolean;
-  session: {
-    status: "not_started" | "active" | "paused" | "completed";
-    currentTurn: number;
-    totalTurns: number;
-    turnDurationSeconds: number;
-    timeRemainingSeconds: number;
-    registeredCount: number;
-    totalParticipants: number;
-    activeParticipantId: string | null;
-    activeParticipantName: string | null;
-    isPaused: boolean;
-    turnExpiresAt: string | null;
-  };
-}> {
-  const state = await getEventState();
-  const totalParticipants = state.participants.length;
-  const registeredCount = state.participants.filter((p) => Boolean(p.pinHash)).length;
-
-  if (!state.registrationSession) {
-    return {
-      success: true,
-      session: {
-        status: registeredCount >= totalParticipants ? "completed" : "not_started",
-        currentTurn: 1,
-        totalTurns: totalParticipants,
-        turnDurationSeconds: 60,
-        timeRemainingSeconds: 60,
-        registeredCount,
-        totalParticipants,
-        activeParticipantId: null,
-        activeParticipantName: null,
-        isPaused: false,
-        turnExpiresAt: null,
-      },
-    };
-  }
-
-  const session = state.registrationSession;
-
-  // Auto-advance if active and 60-second window expired
-  if (session.status === "active" && session.turnExpiresAt) {
-    const now = Date.now();
-    const expires = new Date(session.turnExpiresAt).getTime();
-    if (now >= expires) {
-      await autoAdvanceRegistrationTurn(state);
-    }
-  }
-
-  let timeRemaining = 0;
-  if (session.status === "active" && session.turnExpiresAt) {
-    timeRemaining = Math.max(0, Math.ceil((new Date(session.turnExpiresAt).getTime() - Date.now()) / 1000));
-  } else if (session.status === "paused") {
-    timeRemaining = session.pausedRemainingSeconds ?? 60;
-  } else if (session.status === "not_started") {
-    timeRemaining = 60;
-  }
-
-  const activeParticipantName = session.activeParticipantId
-    ? state.participants.find((p) => p.id === session.activeParticipantId)?.name || null
-    : null;
-
-  return {
-    success: true,
-    session: {
-      status: session.status,
-      currentTurn: session.currentTurn,
-      totalTurns: session.totalTurns,
-      turnDurationSeconds: session.turnDurationSeconds,
-      timeRemainingSeconds: timeRemaining,
-      registeredCount,
-      totalParticipants,
-      activeParticipantId: session.activeParticipantId,
-      activeParticipantName,
-      isPaused: session.status === "paused",
-      turnExpiresAt: session.turnExpiresAt,
-    },
-  };
-}
-
-/**
- * Organizer action: Start registration session
- */
-export async function startRegistrationSession(): Promise<{ success: boolean; session: RegistrationSession }> {
-  const state = await getEventState();
-  const registeredCount = state.participants.filter((p) => Boolean(p.pinHash)).length;
-  const firstUnregistered = state.participants.find((p) => !p.pinHash);
-
-  const session: RegistrationSession = {
-    status: registeredCount >= state.participants.length ? "completed" : "active",
-    currentTurn: Math.min(state.participants.length, registeredCount + 1),
-    totalTurns: state.participants.length,
-    turnDurationSeconds: 60,
-    turnStartedAt: new Date().toISOString(),
-    turnExpiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
-    pausedRemainingSeconds: null,
-    activeParticipantId: firstUnregistered ? firstUnregistered.id : null,
-    registeredCount,
-    updatedAt: new Date().toISOString(),
-  };
-
-  state.registrationSession = session;
-  await saveEventState(state);
-  return { success: true, session };
-}
-
-/**
- * Organizer action: Pause registration session
- */
-export async function pauseRegistrationSession(): Promise<{ success: boolean; session: RegistrationSession }> {
-  const state = await getEventState();
-  if (!state.registrationSession) {
-    return await startRegistrationSession();
-  }
-
-  const session = state.registrationSession;
-  if (session.status === "active" && session.turnExpiresAt) {
-    const remaining = Math.max(0, Math.ceil((new Date(session.turnExpiresAt).getTime() - Date.now()) / 1000));
-    session.status = "paused";
-    session.pausedRemainingSeconds = remaining;
-    session.updatedAt = new Date().toISOString();
-    await saveEventState(state);
-  }
-  return { success: true, session };
-}
-
-/**
- * Organizer action: Resume registration session
- */
-export async function resumeRegistrationSession(): Promise<{ success: boolean; session: RegistrationSession }> {
-  const state = await getEventState();
-  if (!state.registrationSession) {
-    return await startRegistrationSession();
-  }
-
-  const session = state.registrationSession;
-  if (session.status === "paused") {
-    const duration = session.pausedRemainingSeconds && session.pausedRemainingSeconds > 0
-      ? session.pausedRemainingSeconds
-      : 60;
-    session.status = "active";
-    session.turnStartedAt = new Date().toISOString();
-    session.turnExpiresAt = new Date(Date.now() + duration * 1000).toISOString();
-    session.pausedRemainingSeconds = null;
-    session.updatedAt = new Date().toISOString();
-    await saveEventState(state);
-  }
-  return { success: true, session };
-}
-
-/**
- * Organizer action: Skip / Advance turn
- */
-export async function skipRegistrationTurn(): Promise<{ success: boolean; session: RegistrationSession }> {
-  const state = await getEventState();
-  if (!state.registrationSession) {
-    return await startRegistrationSession();
-  }
-
-  const session = state.registrationSession;
-  const remaining = state.participants.filter((p) => !p.pinHash);
-
-  if (remaining.length === 0) {
-    session.status = "completed";
-    session.activeParticipantId = null;
-  } else {
-    session.currentTurn += 1;
-    session.status = "active";
-    session.turnStartedAt = new Date().toISOString();
-    session.turnExpiresAt = new Date(Date.now() + session.turnDurationSeconds * 1000).toISOString();
-    session.pausedRemainingSeconds = null;
-
-    const currentIndex = session.activeParticipantId
-      ? remaining.findIndex((p) => p.id === session.activeParticipantId)
-      : -1;
-    const next = remaining[(currentIndex + 1) % remaining.length];
-    session.activeParticipantId = next ? next.id : null;
-  }
-  session.updatedAt = new Date().toISOString();
-  await saveEventState(state);
-  return { success: true, session };
-}
-
-/**
- * Organizer action: Revisit an unregistered participant
- */
-export async function revisitParticipantRegistration(participantId: string): Promise<{
-  success: boolean;
-  error?: string;
-  session?: EventState["registrationSession"];
-}> {
-  const state = await getEventState();
-  const participant = state.participants.find((p) => p.id === participantId);
-
-  if (!participant) {
-    return { success: false, error: "Participant not found." };
-  }
-
-  if (participant.pinHash) {
-    return { success: false, error: `${participant.name} is already registered.` };
-  }
-
-  if (!state.registrationSession) {
-    await startRegistrationSession();
-  }
-
-  const session = state.registrationSession!;
-  session.status = "active";
-  session.activeParticipantId = participant.id;
-  session.currentTurn += 1;
-  session.turnStartedAt = new Date().toISOString();
-  session.turnExpiresAt = new Date(Date.now() + session.turnDurationSeconds * 1000).toISOString();
-  session.pausedRemainingSeconds = null;
-  session.updatedAt = new Date().toISOString();
-
-  await saveEventState(state);
-  return { success: true, session };
 }

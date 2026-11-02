@@ -18,12 +18,6 @@ import {
   authenticateOrRegisterPin,
   revealRecipientWithPin,
   getAdminSafeState,
-  startRegistrationSession,
-  getRegistrationSessionStatus,
-  pauseRegistrationSession,
-  resumeRegistrationSession,
-  skipRegistrationTurn,
-  revisitParticipantRegistration,
 } from "../src/lib/storage";
 
 let passedCount = 0;
@@ -145,7 +139,16 @@ async function runTests() {
   const crossReveal = await revealRecipientWithPin("p2", "5829");
   assert(!crossReveal.success, "Participant 1 PIN cannot unlock Participant 2's gift");
 
-  // TEST 7: Session Token Verification
+  // Another participant (p2) registers independently without sequential locks
+  const p2Reg = await authenticateOrRegisterPin("p2", "4321");
+  assert(p2Reg.success === true, "Participant 2 registers personal PIN independently");
+  assert(p2Reg.isNewRegistration === true, "Participant 2 establishes personal PIN");
+
+  const p2Reveal = await revealRecipientWithPin("p2", "4321");
+  assert(p2Reveal.success === true, "Participant 2 reveals own secret recipient");
+  assert(Boolean(p2Reveal.recipientName && p2Reveal.recipientName !== state.participants[1].name), "Participant 2 recipient is not themselves");
+
+  // TEST 7: Session Security & Tamper Resistance
   console.log("\n--- 7. Session Security ---");
   const secretKey = "SantaSessionSecret2024Key!_SafeHolidayToken";
   const token = createSessionToken("p1", secretKey);
@@ -160,69 +163,12 @@ async function runTests() {
   console.log("\n--- 8. Organizer-Blind Privacy Audit ---");
   const adminState = await getAdminSafeState();
   assert(adminState.totalParticipants === 18, "Organizer dashboard sees 18 participants");
+  assert(adminState.registeredCount >= 2, "Organizer tracks registered participant count");
 
   const leakedKeys = (adminState.participants as any[]).some(
     (p) => p.pin || p.pinHash || p.pinSalt || p.code || p.encryptedRecipient || p.recipientName
   );
   assert(!leakedKeys, "CRITICAL PRIVACY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
-
-  // TEST 9: Supervised 1-at-a-Time Registration Flow
-  console.log("\n--- 9. Supervised 1-at-a-Time Registration Flow ---");
-  const initRegStatus = await getRegistrationSessionStatus();
-  assert(initRegStatus.session.totalTurns === 18, "Session knows total participants (18)");
-
-  const startRes = await startRegistrationSession();
-  assert(startRes.success, "Organizer starts registration session");
-  assert(startRes.session.status === "active", "Registration session status is active");
-  const startTurn = startRes.session.currentTurn;
-  assert(startTurn >= 1 && startTurn <= 18, `Registration starts at active turn (Turn ${startTurn})`);
-  assert(startRes.session.turnDurationSeconds === 60, "Turn window configured for 60 seconds");
-
-  const statusAfterStart = await getRegistrationSessionStatus();
-  assert(statusAfterStart.session.timeRemainingSeconds <= 60 && statusAfterStart.session.timeRemainingSeconds > 0, "60-second countdown actively ticking");
-
-  const activePartId = startRes.session.activeParticipantId;
-  assert(Boolean(activePartId), `Active participant assigned for Turn ${startTurn}`);
-
-  // Verify non-active participant cannot register while another's turn is active
-  const otherPart = (await getEventState()).participants.find((p) => p.id !== activePartId && !p.pinHash);
-  if (otherPart) {
-    const wrongTurnAuth = await authenticateOrRegisterPin(otherPart.id, "9999");
-    assert(!wrongTurnAuth.success, "Concurrent registration blocked: non-active participant cannot register out of turn");
-  }
-
-  // Register active participant with 1-field PIN
-  const regTurn1 = await authenticateOrRegisterPin(activePartId!, "1234");
-  assert(regTurn1.success, "Active participant successfully registers PIN in their window");
-  assert(Boolean(regTurn1.isNewRegistration), "Registration confirmed without confirmation field");
-
-  // Check turn immediately advanced
-  const afterTurn1Status = await getRegistrationSessionStatus();
-  assert(afterTurn1Status.session.currentTurn === startTurn + 1, `Turn immediately advanced to Turn ${startTurn + 1} after registration`);
-  assert(afterTurn1Status.session.registeredCount >= 1, "Registered count incremented");
-
-  // Test Pause & Resume
-  const pauseRes = await pauseRegistrationSession();
-  assert(pauseRes.success && pauseRes.session.status === "paused", "Organizer can pause active registration session");
-
-  const resumeRes = await resumeRegistrationSession();
-  assert(resumeRes.success && resumeRes.session.status === "active", "Organizer can resume paused registration session");
-
-  // Test Skip Turn
-  const skipTurnBefore = resumeRes.session.currentTurn;
-  const skipRes = await skipRegistrationTurn();
-  assert(skipRes.success && skipRes.session.currentTurn === skipTurnBefore + 1, "Organizer can skip turn if participant is unavailable");
-
-  // Test Revisit Unregistered Participant
-  if (otherPart) {
-    const revisitRes = await revisitParticipantRegistration(otherPart.id);
-    assert(Boolean(revisitRes.success && revisitRes.session && revisitRes.session.activeParticipantId === otherPart.id), "Organizer can revisit specific unregistered participant");
-  }
-
-  // Verify Admin still has zero assignment visibility
-  const adminDuringReg = await getAdminSafeState();
-  const regLeak = (adminDuringReg.participants as any[]).some((p) => p.encryptedRecipient || p.recipientName);
-  assert(!regLeak, "Assignments remain strictly hidden during registration");
 
   // FINAL SUMMARY
   console.log("\n========================================================");
