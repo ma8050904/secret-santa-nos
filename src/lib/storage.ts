@@ -112,13 +112,22 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
       let streamRes: any = null;
       try {
         // Direct read eliminates 600ms list() roundtrip
-        streamRes = await get(`${KNOWN_BLOB_URL}?t=${now}`, { access: "private" });
+        streamRes = await get(`${KNOWN_BLOB_URL}?t=${now}`, {
+          access: "private",
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
       } catch {
         // Fallback to list lookup if direct URL fails
-        const listRes = await list({ prefix: "secret-santa-event.json" });
+        const listRes = await list({
+          prefix: "secret-santa-event.json",
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
         const blobInfo = listRes.blobs.find((b) => b.pathname === "secret-santa-event.json");
         if (blobInfo) {
-          streamRes = await get(`${blobInfo.url}?t=${now}`, { access: "private" });
+          streamRes = await get(`${blobInfo.url}?t=${now}`, {
+            access: "private",
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          });
         }
       }
 
@@ -131,6 +140,9 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
       }
     } catch (blobErr) {
       console.warn("Notice: Blob storage fetch attempt:", blobErr);
+      if (inMemoryStateCache) {
+        return inMemoryStateCache;
+      }
     }
   }
 
@@ -150,6 +162,7 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
           });
         } catch {
           // ignore background seed error
@@ -162,7 +175,16 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
     console.error("Warning: Failed to read from storage file, reinitializing", err);
   }
 
-  // Create default and persist
+  // In production with BLOB_READ_WRITE_TOKEN, NEVER auto-reinitialize or overwrite existing draw!
+  if (inMemoryStateCache) {
+    return inMemoryStateCache;
+  }
+
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error("Temporary storage connection error. Please refresh the page.");
+  }
+
+  // Create default and persist ONLY in clean local development / test environments
   const initial = createInitialState();
   await saveEventState(initial);
 
@@ -195,6 +217,7 @@ export async function saveEventState(state: EventState): Promise<void> {
           access: "private",
           addRandomSuffix: false,
           allowOverwrite: true,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
         });
       } catch (blobErr) {
         console.error("Critical: Failed to save state to Vercel Blob:", blobErr);

@@ -7,6 +7,27 @@ const TARGET_VOLUME = 0.28;
 const FADE_IN_MS = 1400;
 const FADE_OUT_MS = 600;
 
+function safeGetStorage(key: string): string | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+  } catch {
+    // In-app browsers or private mode may restrict storage
+  }
+  return null;
+}
+
+function safeSetStorage(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
+  } catch {
+    // In-app browsers or private mode may restrict storage
+  }
+}
+
 export const BackgroundMusic: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -21,60 +42,91 @@ export const BackgroundMusic: React.FC = () => {
 
   const fadeIn = useCallback((audio: HTMLAudioElement) => {
     clearFade();
-    audio.volume = 0;
-    const steps = 20;
-    const stepDuration = FADE_IN_MS / steps;
-    const volStep = TARGET_VOLUME / steps;
+    try {
+      audio.volume = 0;
+      const steps = 20;
+      const stepDuration = FADE_IN_MS / steps;
+      const volStep = TARGET_VOLUME / steps;
 
-    fadeIntervalRef.current = setInterval(() => {
-      if (!audioRef.current) {
-        clearFade();
-        return;
-      }
-      const newVol = Math.min(TARGET_VOLUME, audio.volume + volStep);
-      audio.volume = newVol;
-      if (newVol >= TARGET_VOLUME) {
-        clearFade();
-      }
-    }, stepDuration);
+      fadeIntervalRef.current = setInterval(() => {
+        if (!audioRef.current) {
+          clearFade();
+          return;
+        }
+        try {
+          const newVol = Math.min(TARGET_VOLUME, audio.volume + volStep);
+          audio.volume = newVol;
+          if (newVol >= TARGET_VOLUME) {
+            clearFade();
+          }
+        } catch {
+          clearFade();
+        }
+      }, stepDuration);
+    } catch {
+      // Audio volume manipulation failed gracefully
+    }
   }, []);
 
   const fadeOutAndPause = useCallback((audio: HTMLAudioElement, callback?: () => void) => {
     clearFade();
-    const steps = 15;
-    const stepDuration = FADE_OUT_MS / steps;
-    const volStep = (audio.volume || TARGET_VOLUME) / steps;
+    try {
+      const steps = 15;
+      const stepDuration = FADE_OUT_MS / steps;
+      const volStep = (audio.volume || TARGET_VOLUME) / steps;
 
-    fadeIntervalRef.current = setInterval(() => {
-      if (!audioRef.current) {
-        clearFade();
-        return;
-      }
-      const newVol = Math.max(0, audio.volume - volStep);
-      audio.volume = newVol;
-      if (newVol <= 0.01) {
-        clearFade();
+      fadeIntervalRef.current = setInterval(() => {
+        if (!audioRef.current) {
+          clearFade();
+          return;
+        }
+        try {
+          const newVol = Math.max(0, audio.volume - volStep);
+          audio.volume = newVol;
+          if (newVol <= 0.01) {
+            clearFade();
+            audio.pause();
+            audio.volume = 0;
+            if (callback) callback();
+          }
+        } catch {
+          clearFade();
+          try {
+            audio.pause();
+          } catch {
+            // ignore
+          }
+        }
+      }, stepDuration);
+    } catch {
+      try {
         audio.pause();
-        audio.volume = 0;
-        if (callback) callback();
+      } catch {
+        // ignore
       }
-    }, stepDuration);
+    }
   }, []);
 
   const startPlayback = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    audio
-      .play()
-      .then(() => {
-        setIsPlaying(true);
-        fadeIn(audio);
-      })
-      .catch(() => {
-        // Autoplay policy prevented immediate playback; wait for interaction
-        setIsPlaying(false);
-      });
+    try {
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true);
+            fadeIn(audio);
+          })
+          .catch(() => {
+            // Autoplay policy prevented playback until user interaction
+            setIsPlaying(false);
+          });
+      }
+    } catch {
+      setIsPlaying(false);
+    }
   }, [fadeIn]);
 
   const stopPlayback = useCallback(() => {
@@ -85,67 +137,56 @@ export const BackgroundMusic: React.FC = () => {
   }, [fadeOutAndPause]);
 
   useEffect(() => {
-    // Instantiate persistent audio element with lazy preload
-    const audio = new Audio("/christmas-soundtrack.mp3");
-    audio.loop = true;
-    audio.preload = "none";
-    audio.volume = 0;
-    audioRef.current = audio;
+    let audio: HTMLAudioElement | null = null;
+    let timer: NodeJS.Timeout | null = null;
 
-    const savedPreference = typeof window !== "undefined" ? localStorage.getItem("santa_music_muted") : null;
-    const isMuted = savedPreference === "true";
+    try {
+      if (typeof window !== "undefined" && typeof Audio !== "undefined") {
+        audio = new Audio("/christmas-soundtrack.mp3");
+        audio.loop = true;
+        audio.preload = "none";
+        audio.volume = 0;
+        audioRef.current = audio;
 
-    // Defer autoplay attempt slightly to allow main thread hydration to finish uninterrupted
-    const timer = setTimeout(() => {
-      if (!isMuted && audioRef.current) {
-        audioRef.current
-          .play()
-          .then(() => {
-            setIsPlaying(true);
-            fadeIn(audioRef.current!);
-          })
-          .catch(() => {
-            // Fallback to start on first user interaction
-            const handleFirstInteraction = () => {
-              if (localStorage.getItem("santa_music_muted") !== "true" && audioRef.current) {
-                audioRef.current
-                  .play()
-                  .then(() => {
-                    setIsPlaying(true);
-                    fadeIn(audioRef.current!);
-                  })
-                  .catch(() => {});
-              }
-              window.removeEventListener("click", handleFirstInteraction);
-              window.removeEventListener("touchstart", handleFirstInteraction);
-              window.removeEventListener("keydown", handleFirstInteraction);
-            };
+        const savedPreference = safeGetStorage("santa_music_muted");
+        const isMuted = savedPreference === "true";
 
-            window.addEventListener("click", handleFirstInteraction, { passive: true });
-            window.addEventListener("touchstart", handleFirstInteraction, { passive: true });
-            window.addEventListener("keydown", handleFirstInteraction, { passive: true });
-          });
+        if (!isMuted) {
+          timer = setTimeout(() => {
+            if (audioRef.current && safeGetStorage("santa_music_muted") !== "true") {
+              startPlayback();
+            }
+          }, 600);
+        }
       }
-    }, 300);
+    } catch {
+      // Audio element not supported or blocked by policy
+    }
 
     return () => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       clearFade();
-      audio.pause();
-      audio.src = "";
+      if (audio) {
+        try {
+          audio.pause();
+          audio.src = "";
+        } catch {
+          // ignore
+        }
+      }
       audioRef.current = null;
     };
-  }, [fadeIn]);
+  }, [startPlayback]);
 
   const toggleMusic = () => {
     const audio = audioRef.current;
     if (!audio) return;
 
     if (isPlaying) {
-      localStorage.setItem("santa_music_muted", "true");
+      safeSetStorage("santa_music_muted", "true");
       stopPlayback();
     } else {
-      localStorage.setItem("santa_music_muted", "false");
+      safeSetStorage("santa_music_muted", "false");
       startPlayback();
     }
   };
@@ -153,6 +194,7 @@ export const BackgroundMusic: React.FC = () => {
   return (
     <button
       onClick={toggleMusic}
+      type="button"
       aria-label={isPlaying ? "Mute Christmas music" : "Play Christmas music"}
       title={isPlaying ? "Mute Christmas Music" : "Play Christmas Music"}
       className="group flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-[#123824]/80 px-2.5 py-1.5 text-xs text-amber-200 transition-all hover:border-amber-400 hover:bg-[#1b4d32] hover:text-white shadow-sm cursor-pointer"

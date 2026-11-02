@@ -32,25 +32,33 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
 
   // Trigger rich multi-stage festive confetti
   const triggerConfetti = () => {
-    const count = 240;
-    const defaults = {
-      origin: { y: 0.65 },
-      colors: ["#d4af37", "#fef3c7", "#b91c1c", "#15803d", "#ffffff"],
-    };
+    try {
+      const count = 240;
+      const defaults = {
+        origin: { y: 0.65 },
+        colors: ["#d4af37", "#fef3c7", "#b91c1c", "#15803d", "#ffffff"],
+      };
 
-    function fire(particleRatio: number, opts: confetti.Options) {
-      confetti({
-        ...defaults,
-        ...opts,
-        particleCount: Math.floor(count * particleRatio),
-      });
+      function fire(particleRatio: number, opts: confetti.Options) {
+        try {
+          confetti({
+            ...defaults,
+            ...opts,
+            particleCount: Math.floor(count * particleRatio),
+          });
+        } catch {
+          // ignore confetti canvas errors
+        }
+      }
+
+      fire(0.25, { spread: 30, startVelocity: 60 });
+      fire(0.2, { spread: 65 });
+      fire(0.35, { spread: 110, decay: 0.91, scalar: 0.8 });
+      fire(0.1, { spread: 130, startVelocity: 25, decay: 0.92, scalar: 1.2 });
+      fire(0.1, { spread: 130, startVelocity: 50 });
+    } catch {
+      // ignore
     }
-
-    fire(0.25, { spread: 30, startVelocity: 60 });
-    fire(0.2, { spread: 65 });
-    fire(0.35, { spread: 110, decay: 0.91, scalar: 0.8 });
-    fire(0.1, { spread: 130, startVelocity: 25, decay: 0.92, scalar: 1.2 });
-    fire(0.1, { spread: 130, startVelocity: 50 });
   };
 
   // Perform animated gift unwrapping

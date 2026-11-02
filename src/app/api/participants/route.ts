@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getEventState } from "@/lib/storage";
+import { PARTICIPANTS } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export async function GET() {
     const publicParticipants = state.participants.map((p) => ({
       id: p.id,
       name: p.name,
-      isRevealed: p.isRevealed,
+      isRevealed: Boolean(p.isRevealed),
     }));
 
     return NextResponse.json(
@@ -31,7 +32,24 @@ export async function GET() {
       }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    console.error("Warning: Storage read notice in /api/participants, using resilient fallback:", err);
+    // Never fail the entire website with 500: return standard participants list gracefully
+    return NextResponse.json(
+      {
+        success: true,
+        eventStatus: "active",
+        participants: PARTICIPANTS.map((p) => ({
+          id: p.id,
+          name: p.name,
+          isRevealed: false,
+        })),
+        degraded: true,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
   }
 }

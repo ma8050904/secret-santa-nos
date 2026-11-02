@@ -1,16 +1,92 @@
 "use client";
 
 import React, { useEffect, useState, Suspense, useCallback } from "react";
-import { ArrowDown, Gift } from "lucide-react";
+import { ArrowDown, Gift, RefreshCw } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
 import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
 
+// Default participant list pre-populated to guarantee immediate rendering and resilience
+const DEFAULT_PARTICIPANTS: ParticipantItem[] = [
+  { id: "p1", name: "Qais Alhadeed", isRevealed: false },
+  { id: "p2", name: "Mohammad Alshourati", isRevealed: false },
+  { id: "p3", name: "Mohammad Darras", isRevealed: false },
+  { id: "p4", name: "Hamza Darawi", isRevealed: false },
+  { id: "p5", name: "Zeina Darawi", isRevealed: false },
+  { id: "p6", name: "JOEL", isRevealed: false },
+  { id: "p7", name: "Yara Brj", isRevealed: false },
+  { id: "p8", name: "Leya Alkhateeb", isRevealed: false },
+  { id: "p9", name: "Nard", isRevealed: false },
+  { id: "p10", name: "Sanad", isRevealed: false },
+  { id: "p11", name: "G_karkar4", isRevealed: false },
+  { id: "p12", name: "Shammas", isRevealed: false },
+  { id: "p13", name: "Ghazal", isRevealed: false },
+  { id: "p14", name: "Jude", isRevealed: false },
+  { id: "p15", name: "Malak", isRevealed: false },
+  { id: "p16", name: "Sarah", isRevealed: false },
+  { id: "p17", name: "Wasan", isRevealed: false },
+  { id: "p18", name: "Michooo", isRevealed: false },
+];
+
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+class SafeErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Client error boundary caught exception:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center bg-[#05150d] px-4 text-center text-white">
+          <div className="mx-auto max-w-md rounded-3xl border border-amber-500/30 bg-[#0a2618]/90 p-8 shadow-2xl backdrop-blur-xl">
+            <span className="text-4xl">🎄</span>
+            <h2 className="mt-4 font-serif text-2xl font-bold text-amber-200">
+              The Magic of Secret Santa
+            </h2>
+            <p className="mt-2 text-sm text-emerald-200/80">
+              A temporary display error occurred.
+            </p>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false });
+                if (typeof window !== "undefined") window.location.reload();
+              }}
+              type="button"
+              className="mt-6 inline-flex items-center gap-2 rounded-full border border-amber-400 bg-gradient-to-r from-red-700 to-red-800 px-6 py-2.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Reload Website</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 function SecretSantaApp() {
-  const [participants, setParticipants] = useState<ParticipantItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [participants, setParticipants] = useState<ParticipantItem[]>(DEFAULT_PARTICIPANTS);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Active Session & Modal States
@@ -23,20 +99,22 @@ function SecretSantaApp() {
   const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
   const [showRevealModal, setShowRevealModal] = useState(false);
 
-  // Load participants directory (supports smooth background refresh without flashing skeletons)
-  const loadParticipants = useCallback(async (isBackground = false) => {
+  // Load participants directory silently without flashing skeletons
+  const loadParticipants = useCallback(async (isBackground = true) => {
     try {
       if (!isBackground) setIsLoading(true);
       setError(null);
       const res = await fetch("/api/participants");
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to load participants.");
+      if (!res.ok) {
+        throw new Error("Unable to connect. Please check your connection.");
       }
-      setParticipants(data.participants);
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.participants)) {
+        setParticipants(data.participants);
+      }
     } catch (err: unknown) {
       if (!isBackground) {
-        const msg = err instanceof Error ? err.message : "Connection error.";
+        const msg = err instanceof Error ? err.message : "Connection notice.";
         setError(msg);
       }
     } finally {
@@ -58,7 +136,7 @@ function SecretSantaApp() {
   }, []);
 
   useEffect(() => {
-    loadParticipants();
+    loadParticipants(true);
     checkSession();
   }, [loadParticipants, checkSession]);
 
@@ -70,37 +148,43 @@ function SecretSantaApp() {
   };
 
   // Participant card clicked
-  const handleSelectParticipant = useCallback((p: ParticipantItem) => {
-    if (activeParticipant?.id === p.id && activePin) {
-      setShowRevealModal(true);
-      return;
-    }
-    setSelectedForAuth(p);
-  }, [activeParticipant?.id, activePin]);
+  const handleSelectParticipant = useCallback(
+    (p: ParticipantItem) => {
+      if (activeParticipant?.id === p.id && activePin) {
+        setShowRevealModal(true);
+        return;
+      }
+      setSelectedForAuth(p);
+    },
+    [activeParticipant?.id, activePin]
+  );
 
   // PIN verification success
-  const handleAuthSuccess = useCallback((data: {
-    participant: ParticipantItem;
-    pin: string;
-    isRevealed: boolean;
-    recipientName?: string;
-  }) => {
-    setSelectedForAuth(null);
-    setActiveParticipant(data.participant);
-    setActivePin(data.pin);
-    setIsCurrentlyRevealed(data.isRevealed);
-    setRevealedRecipient(data.recipientName);
-    setShowRevealModal(true);
+  const handleAuthSuccess = useCallback(
+    (data: {
+      participant: ParticipantItem;
+      pin: string;
+      isRevealed: boolean;
+      recipientName?: string;
+    }) => {
+      setSelectedForAuth(null);
+      setActiveParticipant(data.participant);
+      setActivePin(data.pin);
+      setIsCurrentlyRevealed(data.isRevealed);
+      setRevealedRecipient(data.recipientName);
+      setShowRevealModal(true);
 
-    if (data.isRevealed) {
-      setParticipants((prev) =>
-        prev.map((item) => (item.id === data.participant.id ? { ...item, isRevealed: true } : item))
-      );
-    }
+      if (data.isRevealed) {
+        setParticipants((prev) =>
+          prev.map((item) => (item.id === data.participant.id ? { ...item, isRevealed: true } : item))
+        );
+      }
 
-    // Refresh directory silently in background without triggering loading skeletons
-    loadParticipants(true);
-  }, [loadParticipants]);
+      // Refresh directory silently in background
+      loadParticipants(true);
+    },
+    [loadParticipants]
+  );
 
   // Logout
   const handleLogout = useCallback(async () => {
@@ -156,7 +240,8 @@ function SecretSantaApp() {
           <div className="mt-8 flex justify-center">
             <button
               onClick={scrollToParticipants}
-              className="group flex items-center gap-2.5 rounded-full border-2 border-amber-300 bg-gradient-to-r from-red-700 via-red-600 to-red-800 px-8 py-3.5 text-sm sm:text-base font-bold tracking-wide text-white shadow-[0_8px_30px_rgba(185,28,28,0.45)] transition-all hover:scale-105 hover:brightness-110 hover:shadow-[0_12px_40px_rgba(185,28,28,0.65)]"
+              type="button"
+              className="group flex items-center gap-2.5 rounded-full border-2 border-amber-300 bg-gradient-to-r from-red-700 via-red-600 to-red-800 px-8 py-3.5 text-sm sm:text-base font-bold tracking-wide text-white shadow-[0_8px_30px_rgba(185,28,28,0.45)] transition-all hover:scale-105 hover:brightness-110 hover:shadow-[0_12px_40px_rgba(185,28,28,0.65)] cursor-pointer"
             >
               <Gift className="h-4 w-4 transition-transform group-hover:rotate-12" />
               <span>Discover Your Secret Santa</span>
@@ -182,6 +267,7 @@ function SecretSantaApp() {
             error={error}
             onSelectParticipant={handleSelectParticipant}
             selectedParticipantId={activeParticipant?.id || selectedForAuth?.id || null}
+            onRetry={() => loadParticipants(false)}
           />
         </div>
       </main>
@@ -217,8 +303,10 @@ function SecretSantaApp() {
 
 export default function Home() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#05150d]" />}>
-      <SecretSantaApp />
-    </Suspense>
+    <SafeErrorBoundary>
+      <Suspense fallback={<div className="min-h-screen bg-[#05150d]" />}>
+        <SecretSantaApp />
+      </Suspense>
+    </SafeErrorBoundary>
   );
 }
