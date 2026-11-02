@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revealRecipientForParticipant } from "@/lib/storage";
+import { revealRecipientWithPin } from "@/lib/storage";
+import { getSessionFromRequest } from "@/lib/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -11,44 +12,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Malformed request payload" }, { status: 400 });
     }
 
-    const { participantId, passcode } = body;
+    const { participantId, pin } = body;
 
     if (!participantId || typeof participantId !== "string") {
       return NextResponse.json({ success: false, error: "Participant ID is required" }, { status: 400 });
     }
 
-    if (!passcode || typeof passcode !== "string" || passcode.trim().length === 0) {
-      return NextResponse.json({ success: false, error: "Christmas Secret Code is required" }, { status: 400 });
+    if (!pin || typeof pin !== "string" || pin.trim().length === 0) {
+      return NextResponse.json({ success: false, error: "Personal PIN is required to open your gift" }, { status: 400 });
     }
 
     // Rate limiting key: combines client IP and participant ID
-    const rateLimitKey = `${ip}:${participantId}`;
+    const rateLimitKey = `reveal:${ip}:${participantId}`;
     const rateCheck = checkRateLimit(rateLimitKey);
 
     if (!rateCheck.allowed) {
       return NextResponse.json(
         {
           success: false,
-          error: `Too many unsuccessful attempts. Please wait ${rateCheck.retryAfterSec || 60} seconds before trying again.`,
+          error: `Too many reveal attempts. Please wait ${rateCheck.retryAfterSec || 60} seconds.`,
         },
         { status: 429 }
       );
     }
 
-    const result = await revealRecipientForParticipant(participantId, passcode);
+    // Verify session if available
+    const session = getSessionFromRequest(req);
+    if (session && session.participantId !== participantId) {
+      return NextResponse.json(
+        { success: false, error: "Access denied. You cannot access another participant's gift." },
+        { status: 403 }
+      );
+    }
+
+    const result = await revealRecipientWithPin(participantId, pin.trim());
 
     if (!result.success) {
       return NextResponse.json(
         {
           success: false,
           error: result.error || "Authentication failed",
-          remainingAttempts: rateCheck.remainingAttempts,
         },
         { status: 401 }
       );
     }
 
-    // Authentication successful: reset rate limiter
     resetRateLimit(rateLimitKey);
 
     return NextResponse.json({

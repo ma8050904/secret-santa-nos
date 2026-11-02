@@ -1,23 +1,30 @@
 "use client";
 
 import React, { useEffect, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import { Sparkles, Gift, ShieldCheck, Heart, ArrowDown } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ChristmasCountdown } from "@/components/ChristmasCountdown";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
+import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
 
 function SecretSantaApp() {
-  const searchParams = useSearchParams();
   const [participants, setParticipants] = useState<ParticipantItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedParticipant, setSelectedParticipant] = useState<ParticipantItem | null>(null);
-  const [initialCode, setInitialCode] = useState<string>("");
 
-  // Fetch public participant list
+  // Active Session & Modal States
+  const [activeParticipant, setActiveParticipant] = useState<ParticipantItem | null>(null);
+  const [selectedForAuth, setSelectedForAuth] = useState<ParticipantItem | null>(null);
+
+  // Authenticated Reveal state
+  const [activePin, setActivePin] = useState<string | null>(null);
+  const [revealedRecipient, setRevealedRecipient] = useState<string | undefined>(undefined);
+  const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
+  const [showRevealModal, setShowRevealModal] = useState(false);
+
+  // Load participants directory
   const loadParticipants = async () => {
     try {
       setIsLoading(true);
@@ -36,28 +43,23 @@ function SecretSantaApp() {
     }
   };
 
+  // Check existing session
+  const checkSession = async () => {
+    try {
+      const res = await fetch("/api/auth/session");
+      const data = await res.json();
+      if (res.ok && data.authenticated && data.participant) {
+        setActiveParticipant(data.participant);
+      }
+    } catch {
+      // Session check failure is non-blocking
+    }
+  };
+
   useEffect(() => {
     loadParticipants();
+    checkSession();
   }, []);
-
-  // Handle URL query parameters for magic links (e.g. ?p=p1&code=SANTA-4X9B or ?code=...)
-  useEffect(() => {
-    if (!participants.length) return;
-
-    const queryParticipantId = searchParams.get("p");
-    const queryCode = searchParams.get("code");
-
-    if (queryCode) {
-      setInitialCode(queryCode);
-    }
-
-    if (queryParticipantId) {
-      const found = participants.find((p) => p.id === queryParticipantId);
-      if (found) {
-        setSelectedParticipant(found);
-      }
-    }
-  }, [participants, searchParams]);
 
   const scrollToParticipants = () => {
     const el = document.getElementById("participants-section");
@@ -66,8 +68,56 @@ function SecretSantaApp() {
     }
   };
 
+  // Participant card clicked
+  const handleSelectParticipant = (p: ParticipantItem) => {
+    // If already authenticated as this person and we have their session/PIN:
+    if (activeParticipant?.id === p.id && activePin) {
+      setShowRevealModal(true);
+      return;
+    }
+    // Otherwise open PIN verification modal
+    setSelectedForAuth(p);
+  };
+
+  // PIN verification success
+  const handleAuthSuccess = (data: {
+    participant: ParticipantItem;
+    pin: string;
+    isRevealed: boolean;
+    recipientName?: string;
+    isNewRegistration?: boolean;
+  }) => {
+    setSelectedForAuth(null);
+    setActiveParticipant(data.participant);
+    setActivePin(data.pin);
+    setIsCurrentlyRevealed(data.isRevealed);
+    setRevealedRecipient(data.recipientName);
+    setShowRevealModal(true);
+
+    if (data.isRevealed) {
+      setParticipants((prev) =>
+        prev.map((item) => (item.id === data.participant.id ? { ...item, isRevealed: true } : item))
+      );
+    }
+  };
+
+  // Logout
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
+    setActiveParticipant(null);
+    setActivePin(null);
+    setRevealedRecipient(undefined);
+    setIsCurrentlyRevealed(false);
+    setShowRevealModal(false);
+    setSelectedForAuth(null);
+  };
+
   const handleRevealSuccess = (participantId: string) => {
-    // Mark locally as revealed so UI reflects it immediately
+    setIsCurrentlyRevealed(true);
     setParticipants((prev) =>
       prev.map((p) => (p.id === participantId ? { ...p, isRevealed: true } : p))
     );
@@ -84,7 +134,7 @@ function SecretSantaApp() {
       <div className="pointer-events-none fixed bottom-10 left-1/3 h-96 w-96 rounded-full bg-emerald-500/10 blur-[150px]" />
 
       {/* Festive Navigation & Header */}
-      <FestiveHeader />
+      <FestiveHeader activeParticipant={activeParticipant} onLogout={handleLogout} />
 
       <main className="relative z-20 pb-20">
         {/* =====================================================================
@@ -134,12 +184,12 @@ function SecretSantaApp() {
           <div className="mx-auto mt-6 flex max-w-md items-center justify-center gap-4 text-xs text-emerald-200/70">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="h-4 w-4 text-amber-400" />
-              Organizer-Blind Encryption
+              Personal PIN Security
             </span>
             <span>•</span>
             <span className="flex items-center gap-1.5">
               <Heart className="h-4 w-4 text-red-400" />
-              Pure Holiday Joy
+              Zero Organizer Access
             </span>
           </div>
         </section>
@@ -159,10 +209,8 @@ function SecretSantaApp() {
             participants={participants}
             isLoading={isLoading}
             error={error}
-            onSelectParticipant={(p) => {
-              setSelectedParticipant(p);
-            }}
-            selectedParticipantId={selectedParticipant?.id || null}
+            onSelectParticipant={handleSelectParticipant}
+            selectedParticipantId={activeParticipant?.id || selectedForAuth?.id || null}
           />
         </div>
 
@@ -175,9 +223,9 @@ function SecretSantaApp() {
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/30 bg-emerald-950/80 text-xl text-amber-300">
                 1️⃣
               </div>
-              <h3 className="font-serif text-lg font-bold text-white">Find Your Name</h3>
+              <h3 className="font-serif text-lg font-bold text-white">Select Your Name</h3>
               <p className="mt-2 text-xs leading-relaxed text-emerald-200/70">
-                Select your card from the 18 participants above or use the instant search box.
+                Find your card from the 18 participants using the instant search box or directory.
               </p>
             </div>
 
@@ -185,9 +233,9 @@ function SecretSantaApp() {
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/30 bg-emerald-950/80 text-xl text-amber-300">
                 2️⃣
               </div>
-              <h3 className="font-serif text-lg font-bold text-white">Enter Secret Code</h3>
+              <h3 className="font-serif text-lg font-bold text-white">Personal PIN</h3>
               <p className="mt-2 text-xs leading-relaxed text-emerald-200/70">
-                Type your confidential Christmas access code provided privately by your event organizer.
+                Set your private PIN on your first visit, or enter it on return. Hashed with PBKDF2.
               </p>
             </div>
 
@@ -195,9 +243,9 @@ function SecretSantaApp() {
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/30 bg-emerald-950/80 text-xl text-amber-300">
                 3️⃣
               </div>
-              <h3 className="font-serif text-lg font-bold text-white">Open Your Gift</h3>
+              <h3 className="font-serif text-lg font-bold text-white">Unwrap & Reveal</h3>
               <p className="mt-2 text-xs leading-relaxed text-emerald-200/70">
-                Tap the 3D gift box to unwrap and discover who you will surprise this Christmas!
+                Tap the 3D animated gift box to discover who you will surprise with holiday joy!
               </p>
             </div>
           </div>
@@ -205,16 +253,27 @@ function SecretSantaApp() {
       </main>
 
       {/* =====================================================================
-          GIFT BOX REVEAL MODAL
+          STEP 2: PIN AUTHENTICATION / REGISTRATION MODAL
          ===================================================================== */}
-      {selectedParticipant && (
+      {selectedForAuth && (
+        <PinAuthModal
+          participant={selectedForAuth}
+          onClose={() => setSelectedForAuth(null)}
+          onSuccess={handleAuthSuccess}
+        />
+      )}
+
+      {/* =====================================================================
+          STEP 3: GIFT BOX REVEAL MODAL
+         ===================================================================== */}
+      {showRevealModal && activeParticipant && activePin && (
         <GiftBoxReveal
-          participant={selectedParticipant}
-          initialCode={initialCode}
-          onClose={() => {
-            setSelectedParticipant(null);
-            setInitialCode("");
-          }}
+          participant={activeParticipant}
+          pin={activePin}
+          initialRecipientName={revealedRecipient}
+          initialIsRevealed={isCurrentlyRevealed}
+          onClose={() => setShowRevealModal(false)}
+          onLogout={handleLogout}
           onRevealSuccess={handleRevealSuccess}
         />
       )}
@@ -228,7 +287,7 @@ function SecretSantaApp() {
             THE MAGIC OF SECRET SANTA 🎄
           </p>
           <p className="mt-1">
-            Built with Christmas joy, cryptographic privacy, and holiday warmth.
+            Built with Christmas joy, participant-controlled PIN privacy, and holiday warmth.
           </p>
           <p className="mt-2 text-[10px] text-emerald-400/40">
             All 18 assignments are mathematically verified derangements with zero self-matches.

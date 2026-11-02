@@ -2,9 +2,18 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { Volume2, VolumeX, Shield, Sparkles } from "lucide-react";
+import { Volume2, VolumeX, Shield, Sparkles, User, LogOut } from "lucide-react";
+import { ParticipantItem } from "./ParticipantGrid";
 
-export const FestiveHeader: React.FC = () => {
+interface FestiveHeaderProps {
+  activeParticipant?: ParticipantItem | null;
+  onLogout?: () => void;
+}
+
+export const FestiveHeader: React.FC<FestiveHeaderProps> = ({
+  activeParticipant,
+  onLogout,
+}) => {
   const [isPlaying, setIsPlaying] = useState(false);
 
   // Synthesize pleasant holiday bell melody via Web Audio API without needing external files
@@ -15,7 +24,9 @@ export const FestiveHeader: React.FC = () => {
     }
 
     try {
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioContextClass();
 
       // "We Wish You a Merry Christmas" opening phrase frequencies:
@@ -42,11 +53,9 @@ export const FestiveHeader: React.FC = () => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
 
-        // Celesta / warm music box bell tone
         osc.type = "sine";
         osc.frequency.setValueAtTime(note.freq, ctx.currentTime + note.delay);
 
-        // Bell envelope: sharp attack, gentle harmonic decay
         const startTime = ctx.currentTime + note.delay;
         gain.gain.setValueAtTime(0.001, startTime);
         gain.gain.exponentialRampToValueAtTime(0.18, startTime + 0.03);
@@ -124,7 +133,24 @@ export const FestiveHeader: React.FC = () => {
         </Link>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {/* Active User Indicator */}
+          {activeParticipant && (
+            <div className="hidden sm:flex items-center gap-2 rounded-full border border-amber-400/30 bg-[#0c2e1c] px-3 py-1 text-xs text-amber-200">
+              <User className="h-3.5 w-3.5 text-amber-400" />
+              <span className="font-medium">{activeParticipant.name}</span>
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  title="Logout"
+                  className="ml-1 text-emerald-400 hover:text-white"
+                >
+                  <LogOut className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Festive Bell Chime Toggle */}
           <button
             onClick={toggleMusic}

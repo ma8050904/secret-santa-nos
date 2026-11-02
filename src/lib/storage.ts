@@ -5,6 +5,9 @@ import { PARTICIPANTS } from "./constants";
 import {
   generateChristmasPasscode,
   hashPasscode,
+  hashPin,
+  verifyPin,
+  generateRandomSalt,
   encryptRecipient,
   decryptRecipient,
 } from "./crypto";
@@ -13,11 +16,15 @@ import { generateSecretSantaDerangement } from "./derangement";
 export interface StoredParticipant {
   id: string;
   name: string;
-  code: string; // Plaintext code stored ONLY for organizer distribution; excluded from admin public status
-  codeHash: string; // Hash used for auth
+  code: string; // Original seed code for recovery & initial decryption
+  codeHash: string; // Hash used for seed code
   encryptedRecipient: string | null; // AES-256-GCM encrypted recipient name
   isRevealed: boolean;
   revealedAt: string | null;
+  // Personal PIN security fields
+  pinHash?: string | null;
+  pinSalt?: string | null;
+  encryptedWithPin?: boolean;
 }
 
 export interface EventState {
@@ -68,6 +75,9 @@ function createInitialState(): EventState {
       encryptedRecipient: null,
       isRevealed: false,
       revealedAt: null,
+      pinHash: null,
+      pinSalt: null,
+      encryptedWithPin: false,
     };
   });
 
@@ -105,7 +115,7 @@ export async function getEventState(): Promise<EventState> {
   // Create default and persist
   const initial = createInitialState();
   await saveEventState(initial);
-  
+
   // Auto-generate initial assignments so the event is ready immediately
   try {
     await generateAssignments(true);
@@ -142,12 +152,7 @@ export async function saveEventState(state: EventState): Promise<void> {
 }
 
 /**
- * Generates the Secret Santa assignments:
- * 1. Checks that no participant has revealed yet (if already generated)
- * 2. Runs cryptographic derangement
- * 3. Encrypts each assigned recipient with that participant's personal passcode
- * 4. Stores ONLY encrypted recipient blobs (NO plaintext mapping table in DB!)
- * 5. Saves state atomically
+ * Generates the Secret Santa assignments (ONLY used when initializing brand new event)
  */
 export async function generateAssignments(force = false): Promise<{
   success: boolean;
@@ -156,7 +161,6 @@ export async function generateAssignments(force = false): Promise<{
   const state = await getEventState();
 
   if (state.status === "active" && !force) {
-    // Check if anyone has revealed
     const revealedCount = state.participants.filter((p) => p.isRevealed).length;
     if (revealedCount > 0) {
       throw new Error(`Cannot regenerate draw: ${revealedCount} participant(s) have already revealed their secret gift!`);
@@ -183,6 +187,9 @@ export async function generateAssignments(force = false): Promise<{
     participant.encryptedRecipient = encrypted;
     participant.isRevealed = false;
     participant.revealedAt = null;
+    participant.pinHash = null;
+    participant.pinSalt = null;
+    participant.encryptedWithPin = false;
   }
 
   state.status = "active";
@@ -197,12 +204,156 @@ export async function generateAssignments(force = false): Promise<{
 }
 
 /**
- * Authenticates participant and decrypts their secret recipient.
- * If not previously revealed, marks them as revealed atomically.
+ * Authenticates with an existing PIN or establishes a personal PIN on first visit.
+ * CRITICAL SECURITY:
+ * Never reveals whether another participant has already registered a PIN on failure.
  */
-export async function revealRecipientForParticipant(
+export async function authenticateOrRegisterPin(
   participantId: string,
-  enteredPasscode: string
+  rawPin: string,
+  rawConfirmPin?: string
+): Promise<{
+  success: boolean;
+  error?: string;
+  isNewRegistration?: boolean;
+  participant?: {
+    id: string;
+    name: string;
+    isRevealed: boolean;
+  };
+  recipientName?: string;
+}> {
+  const state = await getEventState();
+  const participant = state.participants.find((p) => p.id === participantId);
+
+  if (!participant) {
+    return {
+      success: false,
+      error: "Participant not found.",
+    };
+  }
+
+  const pin = rawPin ? rawPin.trim() : "";
+  const confirmPin = rawConfirmPin ? rawConfirmPin.trim() : "";
+
+  // Universal authentication failure error message (prevents user enumeration & registration probing)
+  const genericAuthFailMsg =
+    "Authentication failed. Please verify your PIN. (If this is your first visit, please enter and confirm your chosen PIN in both fields).";
+
+  // CASE 1: Participant has ALREADY established a PIN
+  if (participant.pinHash && participant.pinSalt) {
+    if (!pin) {
+      return { success: false, error: genericAuthFailMsg };
+    }
+
+    const isValid = verifyPin(pin, participant.pinHash, participant.pinSalt);
+    if (!isValid) {
+      return { success: false, error: genericAuthFailMsg };
+    }
+
+    // Decrypt recipient name using verified PIN
+    let recipientName: string | undefined;
+    try {
+      if (participant.encryptedRecipient) {
+        recipientName = decryptRecipient(
+          participant.encryptedRecipient,
+          pin,
+          participant.pinSalt
+        );
+      }
+    } catch (err) {
+      console.error("Decryption with PIN failed:", err);
+      return { success: false, error: "Error decrypting assignment. Please verify your PIN." };
+    }
+
+    return {
+      success: true,
+      isNewRegistration: false,
+      participant: {
+        id: participant.id,
+        name: participant.name,
+        isRevealed: participant.isRevealed,
+      },
+      recipientName: participant.isRevealed ? recipientName : undefined,
+    };
+  }
+
+  // CASE 2: Participant is establishing their PIN for the FIRST TIME
+  // Require both fields to be present and match
+  if (!pin || !confirmPin || pin !== confirmPin) {
+    return {
+      success: false,
+      error: genericAuthFailMsg,
+    };
+  }
+
+  if (pin.length < 4) {
+    return {
+      success: false,
+      error: "For your privacy, your PIN must be at least 4 characters long.",
+    };
+  }
+
+  if (pin.length > 32) {
+    return {
+      success: false,
+      error: "PIN cannot exceed 32 characters.",
+    };
+  }
+
+  // Decrypt the existing assignment using the seed code and master salt
+  let originalRecipient: string;
+  try {
+    if (!participant.encryptedRecipient) {
+      throw new Error("No assignment found to re-encrypt");
+    }
+    originalRecipient = decryptRecipient(
+      participant.encryptedRecipient,
+      participant.code,
+      state.masterSalt
+    );
+  } catch (err) {
+    console.error("Failed to decrypt seed recipient during PIN establishment:", err);
+    return {
+      success: false,
+      error: "Could not initialize assignment with your PIN. Please contact the administrator.",
+    };
+  }
+
+  // Generate individual salt for this participant's PIN
+  const pinSalt = generateRandomSalt();
+  const pinHash = hashPin(pin, pinSalt);
+
+  // Re-encrypt the recipient name with the key derived from the participant's new PIN
+  const newEncryptedRecipient = encryptRecipient(originalRecipient, pin, pinSalt);
+
+  // Update participant record (preserving isRevealed status and timestamps)
+  participant.pinHash = pinHash;
+  participant.pinSalt = pinSalt;
+  participant.encryptedRecipient = newEncryptedRecipient;
+  participant.encryptedWithPin = true;
+
+  await saveEventState(state);
+
+  return {
+    success: true,
+    isNewRegistration: true,
+    participant: {
+      id: participant.id,
+      name: participant.name,
+      isRevealed: participant.isRevealed,
+    },
+    recipientName: participant.isRevealed ? originalRecipient : undefined,
+  };
+}
+
+/**
+ * Reveals the recipient name for an authenticated participant.
+ * If this is the participant's first time opening the gift, marks them as revealed atomically.
+ */
+export async function revealRecipientWithPin(
+  participantId: string,
+  pin: string
 ): Promise<{
   success: boolean;
   recipientName?: string;
@@ -210,40 +361,32 @@ export async function revealRecipientForParticipant(
   error?: string;
 }> {
   const state = await getEventState();
-
-  if (state.status !== "active") {
-    return {
-      success: false,
-      error: "The Secret Santa draw has not been activated by the organizer yet. Please check back soon!",
-    };
-  }
-
   const participant = state.participants.find((p) => p.id === participantId);
-  if (!participant) {
+
+  if (!participant || !participant.encryptedRecipient) {
     return { success: false, error: "Participant not found." };
   }
 
-  if (!participant.encryptedRecipient) {
-    return { success: false, error: "No assignment found for this participant." };
+  if (!participant.pinHash || !participant.pinSalt) {
+    return { success: false, error: "No personal PIN has been registered for this participant yet." };
   }
 
-  // Verify passcode hash
-  const testHash = hashPasscode(enteredPasscode, state.masterSalt);
-  if (testHash !== participant.codeHash) {
-    return { success: false, error: "Invalid Christmas Secret Code. Please check your code and try again!" };
+  // Verify PIN
+  const isValid = verifyPin(pin, participant.pinHash, participant.pinSalt);
+  if (!isValid) {
+    return { success: false, error: "Invalid PIN. Access denied." };
   }
 
-  // Decrypt recipient name using the participant's passcode
   let decryptedName: string;
   try {
     decryptedName = decryptRecipient(
       participant.encryptedRecipient,
-      enteredPasscode,
-      state.masterSalt
+      pin,
+      participant.pinSalt
     );
   } catch (err) {
-    console.error("Decryption failed:", err);
-    return { success: false, error: "Decryption failed. Please ensure the code is correct." };
+    console.error("Reveal decryption error:", err);
+    return { success: false, error: "Decryption failed. Please ensure PIN is correct." };
   }
 
   const isFirstReveal = !participant.isRevealed;
@@ -262,41 +405,8 @@ export async function revealRecipientForParticipant(
 }
 
 /**
- * Regenerates new access codes for all participants (ONLY allowed before draw is active/revealed)
- */
-export async function regenerateParticipantCodes(): Promise<{ success: boolean; message: string }> {
-  const state = await getEventState();
-
-  const revealedCount = state.participants.filter((p) => p.isRevealed).length;
-  if (revealedCount > 0) {
-    throw new Error(`Cannot regenerate credentials: ${revealedCount} participant(s) have already opened their gifts!`);
-  }
-
-  const masterSalt = crypto.randomBytes(16).toString("hex");
-  state.masterSalt = masterSalt;
-
-  for (const p of state.participants) {
-    p.code = generateChristmasPasscode();
-    p.codeHash = hashPasscode(p.code, masterSalt);
-    p.encryptedRecipient = null;
-    p.isRevealed = false;
-    p.revealedAt = null;
-  }
-
-  state.status = "uninitialized";
-  state.generatedAt = null;
-
-  await saveEventState(state);
-
-  return {
-    success: true,
-    message: "New participant credentials successfully generated.",
-  };
-}
-
-/**
  * Returns organizer safe view:
- * CRITICAL PRIVACY: Strictly omits encryptedRecipient and has zero recipient mapping data!
+ * CRITICAL PRIVACY: Strictly omits encryptedRecipient, PINs, and hashes.
  */
 export async function getAdminSafeState(): Promise<{
   status: string;
@@ -308,7 +418,6 @@ export async function getAdminSafeState(): Promise<{
   participants: {
     id: string;
     name: string;
-    code: string;
     isRevealed: boolean;
     revealedAt: string | null;
   }[];
@@ -323,11 +432,10 @@ export async function getAdminSafeState(): Promise<{
     totalParticipants: state.participants.length,
     revealedCount,
     pendingCount: state.participants.length - revealedCount,
-    // Return distribution credentials without any recipient or mapping info
+    // Strictly omit PINs, hashes, codes, and recipient mappings
     participants: state.participants.map((p) => ({
       id: p.id,
       name: p.name,
-      code: p.code,
       isRevealed: p.isRevealed,
       revealedAt: p.revealedAt,
     })),

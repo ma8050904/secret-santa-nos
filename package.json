@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx test/verify-secret-santa.ts"
+    "test": "STORAGE_FILE_PATH=/tmp/test-secret-santa.json tsx test/verify-secret-santa.ts"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

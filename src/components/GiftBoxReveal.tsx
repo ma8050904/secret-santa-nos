@@ -2,33 +2,38 @@
 
 import React, { useState } from "react";
 import confetti from "canvas-confetti";
-import { Sparkles, Lock, Gift, ArrowRight, ShieldCheck, CheckCircle2 } from "lucide-react";
+import { Sparkles, Gift, LogOut, CheckCircle2 } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
 
 interface GiftBoxRevealProps {
   participant: ParticipantItem;
-  initialCode?: string;
+  pin: string;
+  initialRecipientName?: string;
+  initialIsRevealed?: boolean;
   onClose: () => void;
+  onLogout: () => void;
   onRevealSuccess: (participantId: string) => void;
 }
 
 export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
   participant,
-  initialCode = "",
+  pin,
+  initialRecipientName,
+  initialIsRevealed = false,
   onClose,
+  onLogout,
   onRevealSuccess,
 }) => {
-  const [passcode, setPasscode] = useState(initialCode);
-  const [stage, setStage] = useState<"enter_code" | "ready_to_open" | "opening" | "revealed">("enter_code");
-  const [recipientName, setRecipientName] = useState<string | null>(null);
-  const [isFirstReveal, setIsFirstReveal] = useState(true);
+  const [stage, setStage] = useState<"ready_to_open" | "opening" | "revealed">(
+    initialIsRevealed && initialRecipientName ? "revealed" : "ready_to_open"
+  );
+  const [recipientName, setRecipientName] = useState<string | null>(initialRecipientName || null);
+  const [isFirstReveal, setIsFirstReveal] = useState(!initialIsRevealed);
   const [error, setError] = useState<string | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
 
   // Trigger rich multi-stage festive confetti
   const triggerConfetti = () => {
-    const count = 200;
+    const count = 220;
     const defaults = {
       origin: { y: 0.7 },
       colors: ["#d4af37", "#fef3c7", "#b91c1c", "#15803d", "#ffffff"],
@@ -42,78 +47,23 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
       });
     }
 
-    fire(0.25, {
-      spread: 26,
-      startVelocity: 55,
-    });
-    fire(0.2, {
-      spread: 60,
-    });
-    fire(0.35, {
-      spread: 100,
-      decay: 0.91,
-      scalar: 0.8,
-    });
-    fire(0.1, {
-      spread: 120,
-      startVelocity: 25,
-      decay: 0.92,
-      scalar: 1.2,
-    });
-    fire(0.1, {
-      spread: 120,
-      startVelocity: 45,
-    });
-  };
-
-  // Authenticate participant code
-  const handleVerifyCode = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!passcode.trim()) {
-      setError("Please enter your Christmas Secret Code.");
-      return;
-    }
-
-    setError(null);
-    setIsVerifying(true);
-
-    try {
-      const res = await fetch("/api/reveal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          participantId: participant.id,
-          passcode: passcode.trim(),
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        setError(data.error || "Authentication failed. Please verify your code.");
-        setIsVerifying(false);
-        return;
-      }
-
-      setRecipientName(data.recipientName);
-      setIsFirstReveal(Boolean(data.isFirstReveal));
-      setIsVerifying(false);
-
-      // Transition to gift box ready stage
-      setStage("ready_to_open");
-    } catch {
-      setError("Network error while connecting to Santa's server. Please try again.");
-      setIsVerifying(false);
-    }
+    fire(0.25, { spread: 26, startVelocity: 55 });
+    fire(0.2, { spread: 60 });
+    fire(0.35, { spread: 100, decay: 0.91, scalar: 0.8 });
+    fire(0.1, { spread: 120, startVelocity: 25, decay: 0.92, scalar: 1.2 });
+    fire(0.1, { spread: 120, startVelocity: 45 });
   };
 
   // Perform animated gift unwrapping
-  const handleOpenGift = () => {
+  const handleOpenGift = async () => {
+    setError(null);
     setStage("opening");
 
     // Play unwrap & celebratory chime if available
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       const chimeFreqs = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
       chimeFreqs.forEach((freq, idx) => {
@@ -133,107 +83,66 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
       // Audio is non-blocking enhancement
     }
 
-    setTimeout(() => {
-      setStage("revealed");
-      triggerConfetti();
-      onRevealSuccess(participant.id);
-    }, 1200);
-  };
+    try {
+      const res = await fetch("/api/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantId: participant.id,
+          pin: pin,
+        }),
+      });
 
-  const handleCopySecretLink = () => {
-    const url = `${window.location.origin}/?p=${participant.id}&code=${encodeURIComponent(passcode.trim())}`;
-    navigator.clipboard.writeText(url);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 3000);
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.error || "Failed to reveal your gift.");
+        setStage("ready_to_open");
+        return;
+      }
+
+      setRecipientName(data.recipientName);
+      setIsFirstReveal(Boolean(data.isFirstReveal));
+
+      setTimeout(() => {
+        setStage("revealed");
+        triggerConfetti();
+        onRevealSuccess(participant.id);
+      }, 1000);
+    } catch {
+      setError("Network error while connecting to Santa's server.");
+      setStage("ready_to_open");
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-in fade-in duration-300">
       <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#0a2618] via-[#071d13] to-[#04120b] p-6 md:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.8)]">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-full border border-amber-500/30 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white"
-          aria-label="Close"
-        >
-          ✕
-        </button>
+        {/* Header Controls */}
+        <div className="flex items-center justify-between pb-2">
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-1.5 text-xs text-amber-300/80 hover:text-white transition-colors"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Switch / Logout</span>
+          </button>
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-500/30 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
 
         {/* =========================================================================
-            STAGE 1: ENTER CODE
-           ========================================================================= */}
-        {stage === "enter_code" && (
-          <div className="text-center">
-            {/* Participant Badge */}
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-amber-400/40 bg-gradient-to-br from-red-800 to-emerald-900 shadow-xl">
-              <Lock className="h-8 w-8 text-amber-300" />
-            </div>
-
-            <p className="text-xs font-semibold tracking-widest text-amber-400 uppercase">
-              Private Security Verification
-            </p>
-            <h3 className="mt-1 font-serif text-2xl font-bold text-white">
-              Hello, {participant.name}!
-            </h3>
-            <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-emerald-200/80">
-              To keep Secret Santa truly blind and private, please enter your unique Christmas Secret Code to unlock your gift.
-            </p>
-
-            <form onSubmit={handleVerifyCode} className="mt-6 space-y-4">
-              <div className="text-left">
-                <label className="block text-xs font-medium text-amber-200/90 mb-1.5">
-                  Christmas Secret Code:
-                </label>
-                <input
-                  type="text"
-                  value={passcode}
-                  onChange={(e) => {
-                    setPasscode(e.target.value);
-                    setError(null);
-                  }}
-                  placeholder="e.g. SANTA-4A9B"
-                  autoFocus
-                  required
-                  className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-3.5 text-center font-mono text-base font-bold tracking-widest text-amber-300 uppercase placeholder-emerald-400/30 shadow-inner focus:border-amber-400 focus:bg-[#0c2a1c] focus:ring-2 focus:ring-amber-400/30 focus:outline-none"
-                />
-              </div>
-
-              {error && (
-                <div className="rounded-xl border border-red-500/40 bg-red-950/60 p-3 text-xs text-red-200">
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={isVerifying || !passcode.trim()}
-                className="group flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-400/50 bg-gradient-to-r from-red-700 via-red-600 to-red-800 py-3.5 text-sm font-bold tracking-wide text-white shadow-[0_4px_20px_rgba(185,28,28,0.5)] transition-all hover:brightness-110 hover:shadow-[0_6px_25px_rgba(185,28,28,0.7)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isVerifying ? (
-                  <span>Verifying Secret Passcode...</span>
-                ) : (
-                  <>
-                    <span>Unlock My Gift</span>
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-                  </>
-                )}
-              </button>
-            </form>
-
-            <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-emerald-300/70">
-              <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
-              <span>AES-256-GCM encrypted • Zero organizer access</span>
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            STAGE 2 & 3: READY TO OPEN / OPENING ANIMATION
+            STAGE 1 & 2: READY TO OPEN / OPENING ANIMATION
            ========================================================================= */}
         {(stage === "ready_to_open" || stage === "opening") && (
           <div className="text-center py-4">
             <p className="text-xs font-semibold tracking-widest text-amber-300 uppercase">
-              Verification Succeeded!
+              Authentication Succeeded!
             </p>
             <h3 className="mt-1 font-serif text-2xl font-bold text-white">
               Your Christmas surprise is ready...
@@ -241,6 +150,12 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
             <p className="mt-2 text-xs text-emerald-200/80">
               {participant.name}, your secret recipient has been matched and is sealed in this gift box.
             </p>
+
+            {error && (
+              <div className="mx-auto mt-4 max-w-xs rounded-xl border border-red-500/40 bg-red-950/70 p-2.5 text-xs text-red-200">
+                {error}
+              </div>
+            )}
 
             {/* 3D Animated Gift Box */}
             <div className="my-8 flex justify-center">
@@ -301,7 +216,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         )}
 
         {/* =========================================================================
-            STAGE 4: REVEALED RESULT
+            STAGE 3: REVEALED RESULT
            ========================================================================= */}
         {stage === "revealed" && recipientName && (
           <div className="text-center py-2 animate-in zoom-in-95 duration-500">
@@ -354,19 +269,11 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
             {/* Action Buttons */}
             <div className="flex flex-col gap-2.5 sm:flex-row sm:justify-center">
               <button
-                onClick={handleCopySecretLink}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-[#123824] px-4 py-2.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#1b4d32] hover:text-white"
+                onClick={onLogout}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/30 bg-[#123824] px-4 py-2.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#1b4d32] hover:text-white"
               >
-                {copiedLink ? (
-                  <>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span>Link Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Copy My Secret Bookmark Link</span>
-                  </>
-                )}
+                <LogOut className="h-4 w-4" />
+                <span>Logout / Switch User</span>
               </button>
 
               <button

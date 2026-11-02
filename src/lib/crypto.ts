@@ -7,10 +7,10 @@ const GCM_IV_LENGTH = 12; // 96 bits recommended for AES-GCM
 const GCM_TAG_LENGTH = 16; // 128 bits auth tag
 
 /**
- * Derives a 256-bit encryption key from a participant's secret access code and salt
+ * Derives a 256-bit encryption key from a participant's secret access code or PIN and salt
  */
 export function deriveKeyFromPasscode(passcode: string, salt: string): Buffer {
-  const normalized = passcode.trim().toUpperCase();
+  const normalized = passcode.trim();
   return crypto.pbkdf2Sync(
     normalized,
     salt,
@@ -21,7 +21,7 @@ export function deriveKeyFromPasscode(passcode: string, salt: string): Buffer {
 }
 
 /**
- * Encrypts a recipient's name using AES-256-GCM with the key derived from participant's passcode
+ * Encrypts a recipient's name using AES-256-GCM with the key derived from participant's passcode or PIN
  * Returns a serialized string format: iv:authTag:ciphertext (all base64)
  */
 export function encryptRecipient(recipientName: string, passcode: string, salt: string): string {
@@ -37,8 +37,8 @@ export function encryptRecipient(recipientName: string, passcode: string, salt: 
 }
 
 /**
- * Decrypts a recipient's name using AES-256-GCM with the key derived from participant's passcode
- * Throws an error if the passcode is incorrect or data was tampered with
+ * Decrypts a recipient's name using AES-256-GCM with the key derived from participant's passcode or PIN
+ * Throws an error if the passcode/PIN is incorrect or data was tampered with
  */
 export function decryptRecipient(encryptedData: string, passcode: string, salt: string): string {
   const parts = encryptedData.split(":");
@@ -61,12 +61,21 @@ export function decryptRecipient(encryptedData: string, passcode: string, salt: 
 }
 
 /**
- * Hash a passcode for secure storage & verification without exposing the plaintext passcode
+ * Hash a passcode/PIN for secure storage & verification without exposing the plaintext passcode
  */
 export function hashPasscode(passcode: string, salt: string): string {
-  const normalized = passcode.trim().toUpperCase();
+  const normalized = passcode.trim();
   const hash = crypto.createHmac("sha256", salt).update(normalized).digest("hex");
   return hash;
+}
+
+/**
+ * Robust salted hashing for personal PINs with PBKDF2
+ */
+export function hashPin(pin: string, salt: string): string {
+  const normalized = pin.trim();
+  const derived = crypto.pbkdf2Sync(normalized, salt, 100000, 32, "sha256");
+  return derived.toString("hex");
 }
 
 /**
@@ -82,8 +91,15 @@ export function secureCompare(a: string, b: string): boolean {
 }
 
 /**
+ * Constant-time PIN verification
+ */
+export function verifyPin(enteredPin: string, storedHash: string, salt: string): boolean {
+  const computed = hashPin(enteredPin, salt);
+  return secureCompare(computed, storedHash);
+}
+
+/**
  * Generates a clean, memorable, high-entropy Christmas access code
- * Format: e.g. "SANTA-7K4M" or "NOEL-9X2F" or "JINGLE-4P8T"
  */
 export function generateChristmasPasscode(): string {
   const prefixes = ["SANTA", "NOEL", "FROST", "JOLLY", "MERRY", "BELLS", "STAR", "GIFT"];
@@ -94,4 +110,57 @@ export function generateChristmasPasscode(): string {
     code += chars[crypto.randomInt(0, chars.length)];
   }
   return `${prefix}-${code}`;
+}
+
+/**
+ * Generates a cryptographically secure random salt
+ */
+export function generateRandomSalt(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+/**
+ * Cryptographic session token generation (HMAC-SHA256 signed)
+ */
+export function createSessionToken(participantId: string, secret: string): string {
+  const timestamp = Date.now();
+  const nonce = crypto.randomBytes(8).toString("hex");
+  const payload = `${participantId}:${timestamp}:${nonce}`;
+  const payloadB64 = Buffer.from(payload, "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(payloadB64).digest("base64url");
+  return `${payloadB64}.${signature}`;
+}
+
+/**
+ * Cryptographic session token verification
+ */
+export function verifySessionToken(
+  token: string,
+  secret: string,
+  maxAgeMs = 7 * 24 * 60 * 60 * 1000 // 7 days
+): { participantId: string } | null {
+  if (!token || !token.includes(".")) {
+    return null;
+  }
+
+  const [payloadB64, signature] = token.split(".");
+  const expectedSig = crypto.createHmac("sha256", secret).update(payloadB64).digest("base64url");
+
+  if (!secureCompare(signature, expectedSig)) {
+    return null;
+  }
+
+  try {
+    const payload = Buffer.from(payloadB64, "base64url").toString("utf8");
+    const [participantId, timestampStr] = payload.split(":");
+    const timestamp = parseInt(timestampStr, 10);
+
+    if (isNaN(timestamp) || Date.now() - timestamp > maxAgeMs) {
+      return null;
+    }
+
+    return { participantId };
+  } catch {
+    return null;
+  }
 }
