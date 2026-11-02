@@ -29,6 +29,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!pin.trim()) {
       setError("Please enter your PIN.");
       return;

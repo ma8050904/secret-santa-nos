@@ -55,6 +55,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
 
   // Perform animated gift unwrapping
   const handleOpenGift = async () => {
+    if (stage !== "ready_to_open") return;
     setError(null);
     setStage("opening");
 

@@ -85,48 +85,51 @@ export const BackgroundMusic: React.FC = () => {
   }, [fadeOutAndPause]);
 
   useEffect(() => {
-    // Instantiate persistent audio element
+    // Instantiate persistent audio element with lazy preload
     const audio = new Audio("/christmas-soundtrack.mp3");
     audio.loop = true;
-    audio.preload = "auto";
+    audio.preload = "none";
     audio.volume = 0;
     audioRef.current = audio;
 
     const savedPreference = typeof window !== "undefined" ? localStorage.getItem("santa_music_muted") : null;
     const isMuted = savedPreference === "true";
 
-    if (!isMuted) {
-      // Attempt autoplay
-      audio
-        .play()
-        .then(() => {
-          setIsPlaying(true);
-          fadeIn(audio);
-        })
-        .catch(() => {
-          // Fallback to start on first user interaction
-          const handleFirstInteraction = () => {
-            if (localStorage.getItem("santa_music_muted") !== "true" && audioRef.current) {
-              audioRef.current
-                .play()
-                .then(() => {
-                  setIsPlaying(true);
-                  fadeIn(audioRef.current!);
-                })
-                .catch(() => {});
-            }
-            window.removeEventListener("click", handleFirstInteraction);
-            window.removeEventListener("touchstart", handleFirstInteraction);
-            window.removeEventListener("keydown", handleFirstInteraction);
-          };
+    // Defer autoplay attempt slightly to allow main thread hydration to finish uninterrupted
+    const timer = setTimeout(() => {
+      if (!isMuted && audioRef.current) {
+        audioRef.current
+          .play()
+          .then(() => {
+            setIsPlaying(true);
+            fadeIn(audioRef.current!);
+          })
+          .catch(() => {
+            // Fallback to start on first user interaction
+            const handleFirstInteraction = () => {
+              if (localStorage.getItem("santa_music_muted") !== "true" && audioRef.current) {
+                audioRef.current
+                  .play()
+                  .then(() => {
+                    setIsPlaying(true);
+                    fadeIn(audioRef.current!);
+                  })
+                  .catch(() => {});
+              }
+              window.removeEventListener("click", handleFirstInteraction);
+              window.removeEventListener("touchstart", handleFirstInteraction);
+              window.removeEventListener("keydown", handleFirstInteraction);
+            };
 
-          window.addEventListener("click", handleFirstInteraction, { passive: true });
-          window.addEventListener("touchstart", handleFirstInteraction, { passive: true });
-          window.addEventListener("keydown", handleFirstInteraction, { passive: true });
-        });
-    }
+            window.addEventListener("click", handleFirstInteraction, { passive: true });
+            window.addEventListener("touchstart", handleFirstInteraction, { passive: true });
+            window.addEventListener("keydown", handleFirstInteraction, { passive: true });
+          });
+      }
+    }, 300);
 
     return () => {
+      clearTimeout(timer);
       clearFade();
       audio.pause();
       audio.src = "";

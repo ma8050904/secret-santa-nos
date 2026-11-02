@@ -58,6 +58,11 @@ function getStorageFilePath(): string {
 }
 
 let inMemoryStateCache: EventState | null = null;
+let inMemoryCacheTimestamp = 0;
+const CACHE_TTL_MS = 6000;
+const KNOWN_BLOB_URL =
+  process.env.BLOB_URL ||
+  "https://ygkog8lebahiid0k.private.blob.vercel-storage.com/secret-santa-event.json";
 let writeLock: Promise<void> = Promise.resolve();
 
 /**
@@ -95,24 +100,34 @@ function createInitialState(): EventState {
 /**
  * Reads event state from persistent storage (Vercel Private Blob when available, or local filesystem)
  */
-export async function getEventState(): Promise<EventState> {
-  if (inMemoryStateCache) {
+export async function getEventState(forceFresh = false): Promise<EventState> {
+  const now = Date.now();
+  if (!forceFresh && inMemoryStateCache && (now - inMemoryCacheTimestamp < CACHE_TTL_MS)) {
     return inMemoryStateCache;
   }
 
   // 1. Try reading from Vercel Private Blob store if configured
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     try {
-      const listRes = await list({ prefix: "secret-santa-event.json" });
-      const blobInfo = listRes.blobs.find((b) => b.pathname === "secret-santa-event.json");
-      if (blobInfo) {
-        const getRes = await get(`${blobInfo.url}?t=${Date.now()}`, { access: "private" });
-        if (getRes) {
-          const text = await new Response(getRes.stream).text();
-          const parsed: EventState = JSON.parse(text);
-          inMemoryStateCache = parsed;
-          return parsed;
+      let streamRes: any = null;
+      try {
+        // Direct read eliminates 600ms list() roundtrip
+        streamRes = await get(`${KNOWN_BLOB_URL}?t=${now}`, { access: "private" });
+      } catch {
+        // Fallback to list lookup if direct URL fails
+        const listRes = await list({ prefix: "secret-santa-event.json" });
+        const blobInfo = listRes.blobs.find((b) => b.pathname === "secret-santa-event.json");
+        if (blobInfo) {
+          streamRes = await get(`${blobInfo.url}?t=${now}`, { access: "private" });
         }
+      }
+
+      if (streamRes && streamRes.stream) {
+        const text = await new Response(streamRes.stream).text();
+        const parsed: EventState = JSON.parse(text);
+        inMemoryStateCache = parsed;
+        inMemoryCacheTimestamp = Date.now();
+        return parsed;
       }
     } catch (blobErr) {
       console.warn("Notice: Blob storage fetch attempt:", blobErr);
@@ -126,6 +141,7 @@ export async function getEventState(): Promise<EventState> {
       const data = await fs.promises.readFile(/*turbopackIgnore: true*/ filePath, "utf-8");
       const parsed: EventState = JSON.parse(data);
       inMemoryStateCache = parsed;
+      inMemoryCacheTimestamp = Date.now();
 
       // Seed to blob if blob token is present
       if (process.env.BLOB_READ_WRITE_TOKEN) {
@@ -166,6 +182,7 @@ export async function getEventState(): Promise<EventState> {
  */
 export async function saveEventState(state: EventState): Promise<void> {
   inMemoryStateCache = state;
+  inMemoryCacheTimestamp = Date.now();
 
   // Queue write operations through promise chain to ensure atomic sequential execution
   writeLock = writeLock.then(async () => {

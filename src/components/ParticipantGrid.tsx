@@ -17,7 +17,7 @@ interface ParticipantGridProps {
   selectedParticipantId: string | null;
 }
 
-export const ParticipantGrid: React.FC<ParticipantGridProps> = ({
+const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
   participants,
   isLoading,
   error,
@@ -169,3 +169,5 @@ export const ParticipantGrid: React.FC<ParticipantGridProps> = ({
     </section>
   );
 };
+
+export const ParticipantGrid = React.memo(ParticipantGridComponent);

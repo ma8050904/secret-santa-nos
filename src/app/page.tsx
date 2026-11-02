@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, Suspense, useCallback } from "react";
 import { ArrowDown, Gift } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
@@ -23,10 +23,10 @@ function SecretSantaApp() {
   const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
   const [showRevealModal, setShowRevealModal] = useState(false);
 
-  // Load participants directory
-  const loadParticipants = async () => {
+  // Load participants directory (supports smooth background refresh without flashing skeletons)
+  const loadParticipants = useCallback(async (isBackground = false) => {
     try {
-      setIsLoading(true);
+      if (!isBackground) setIsLoading(true);
       setError(null);
       const res = await fetch("/api/participants");
       const data = await res.json();
@@ -35,15 +35,17 @@ function SecretSantaApp() {
       }
       setParticipants(data.participants);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Connection error.";
-      setError(msg);
+      if (!isBackground) {
+        const msg = err instanceof Error ? err.message : "Connection error.";
+        setError(msg);
+      }
     } finally {
-      setIsLoading(false);
+      if (!isBackground) setIsLoading(false);
     }
-  };
+  }, []);
 
   // Check existing session
-  const checkSession = async () => {
+  const checkSession = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/session");
       const data = await res.json();
@@ -53,12 +55,12 @@ function SecretSantaApp() {
     } catch {
       // Session check failure is non-blocking
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadParticipants();
     checkSession();
-  }, []);
+  }, [loadParticipants, checkSession]);
 
   const scrollToParticipants = () => {
     const el = document.getElementById("participants-section");
@@ -68,16 +70,16 @@ function SecretSantaApp() {
   };
 
   // Participant card clicked
-  const handleSelectParticipant = (p: ParticipantItem) => {
+  const handleSelectParticipant = useCallback((p: ParticipantItem) => {
     if (activeParticipant?.id === p.id && activePin) {
       setShowRevealModal(true);
       return;
     }
     setSelectedForAuth(p);
-  };
+  }, [activeParticipant?.id, activePin]);
 
   // PIN verification success
-  const handleAuthSuccess = (data: {
+  const handleAuthSuccess = useCallback((data: {
     participant: ParticipantItem;
     pin: string;
     isRevealed: boolean;
@@ -90,18 +92,18 @@ function SecretSantaApp() {
     setRevealedRecipient(data.recipientName);
     setShowRevealModal(true);
 
-    // Refresh directory
-    loadParticipants();
-
     if (data.isRevealed) {
       setParticipants((prev) =>
         prev.map((item) => (item.id === data.participant.id ? { ...item, isRevealed: true } : item))
       );
     }
-  };
+
+    // Refresh directory silently in background without triggering loading skeletons
+    loadParticipants(true);
+  }, [loadParticipants]);
 
   // Logout
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {
@@ -113,14 +115,14 @@ function SecretSantaApp() {
     setIsCurrentlyRevealed(false);
     setShowRevealModal(false);
     setSelectedForAuth(null);
-  };
+  }, []);
 
-  const handleRevealSuccess = (participantId: string) => {
+  const handleRevealSuccess = useCallback((participantId: string) => {
     setIsCurrentlyRevealed(true);
     setParticipants((prev) =>
       prev.map((p) => (p.id === participantId ? { ...p, isRevealed: true } : p))
     );
-  };
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-gradient-to-b from-[#05150d] via-[#092215] to-[#040f09] text-white selection:bg-amber-400 selection:text-slate-950">
