@@ -106,7 +106,7 @@ export async function getEventState(): Promise<EventState> {
       const listRes = await list({ prefix: "secret-santa-event.json" });
       const blobInfo = listRes.blobs.find((b) => b.pathname === "secret-santa-event.json");
       if (blobInfo) {
-        const getRes = await get(blobInfo.url, { access: "private" });
+        const getRes = await get(`${blobInfo.url}?t=${Date.now()}`, { access: "private" });
         if (getRes) {
           const text = await new Response(getRes.stream).text();
           const parsed: EventState = JSON.parse(text);
