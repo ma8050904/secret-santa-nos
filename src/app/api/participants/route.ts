@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getEventState } from "@/lib/storage";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Public participant directory endpoint.
  * Returns only safe visual attributes: id, name, isRevealed flag.

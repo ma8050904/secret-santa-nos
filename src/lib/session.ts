@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { createSessionToken, verifySessionToken } from "./crypto";
 
 const SESSION_COOKIE_NAME = "santa_participant_session";
-const SESSION_SECRET = process.env.SESSION_SECRET || "SantaSessionSecret2024Key!_SafeHolidayToken";
+const SESSION_SECRET = process.env.SESSION_SECRET || "SantaFinalSecret2024Key!_SafeHolidayToken_v3";
 
 export function setSessionCookie(response: { cookies: { set: (name: string, value: string, options: any) => void } }, participantId: string) {
   const token = createSessionToken(participantId, SESSION_SECRET);

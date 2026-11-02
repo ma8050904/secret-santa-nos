@@ -1,15 +1,17 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, Suspense, useCallback } from "react";
 import { ArrowDown, Gift } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
 import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
+import { RegistrationBanner, RegistrationSessionData } from "@/components/RegistrationBanner";
 
 function SecretSantaApp() {
   const [participants, setParticipants] = useState<ParticipantItem[]>([]);
+  const [registrationSession, setRegistrationSession] = useState<RegistrationSessionData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +24,19 @@ function SecretSantaApp() {
   const [revealedRecipient, setRevealedRecipient] = useState<string | undefined>(undefined);
   const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
   const [showRevealModal, setShowRevealModal] = useState(false);
+
+  // Load registration status
+  const fetchRegistrationStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/registration/status");
+      const data = await res.json();
+      if (res.ok && data.success && data.session) {
+        setRegistrationSession(data.session);
+      }
+    } catch {
+      // non-blocking
+    }
+  }, []);
 
   // Load participants directory
   const loadParticipants = async () => {
@@ -58,7 +73,12 @@ function SecretSantaApp() {
   useEffect(() => {
     loadParticipants();
     checkSession();
-  }, []);
+    fetchRegistrationStatus();
+
+    // Poll registration status every 2 seconds
+    const interval = setInterval(fetchRegistrationStatus, 2000);
+    return () => clearInterval(interval);
+  }, [fetchRegistrationStatus]);
 
   const scrollToParticipants = () => {
     const el = document.getElementById("participants-section");
@@ -89,6 +109,10 @@ function SecretSantaApp() {
     setIsCurrentlyRevealed(data.isRevealed);
     setRevealedRecipient(data.recipientName);
     setShowRevealModal(true);
+
+    // Refresh directory & registration status immediately
+    fetchRegistrationStatus();
+    loadParticipants();
 
     if (data.isRevealed) {
       setParticipants((prev) =>
@@ -138,19 +162,14 @@ function SecretSantaApp() {
            ===================================================================== */}
         <section className="relative px-4 pt-14 pb-8 text-center sm:pt-20 sm:pb-12">
           {/* Main Heading */}
-          <h1 className="mx-auto max-w-4xl font-serif text-4xl font-extrabold tracking-tight sm:text-6xl md:text-7xl">
+          <h1 className="mx-auto max-w-4xl font-serif text-3xl font-extrabold tracking-tight sm:text-5xl md:text-6xl space-y-2">
             <span className="block text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]">
-              THE MAGIC OF
+              A SECRET TO KEEP.
             </span>
-            <span className="mt-1 block gold-text drop-shadow-[0_4px_24px_rgba(212,175,55,0.5)]">
-              SECRET SANTA
+            <span className="block gold-text drop-shadow-[0_4px_24px_rgba(212,175,55,0.5)]">
+              A SURPRISE TO GIVE.
             </span>
           </h1>
-
-          {/* Subtitle */}
-          <p className="mx-auto mt-4 max-w-lg text-base font-light text-emerald-100/90 sm:text-lg">
-            A little mystery. A lot of Christmas magic.
-          </p>
 
           {/* Primary CTA */}
           <div className="mt-8 flex justify-center">
@@ -172,6 +191,12 @@ function SecretSantaApp() {
           <div className="h-px flex-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
         </div>
 
+        {/* Supervised 1-at-a-time Registration Banner */}
+        <RegistrationBanner
+          session={registrationSession}
+          onRefresh={fetchRegistrationStatus}
+        />
+
         {/* =====================================================================
             PARTICIPANT SELECTION SECTION
            ===================================================================== */}
@@ -192,6 +217,7 @@ function SecretSantaApp() {
       {selectedForAuth && (
         <PinAuthModal
           participant={selectedForAuth}
+          session={registrationSession}
           onClose={() => setSelectedForAuth(null)}
           onSuccess={handleAuthSuccess}
         />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Shield,
@@ -10,9 +10,14 @@ import {
   Eye,
   Clock,
   Sparkles,
-  AlertTriangle,
   ArrowLeft,
   Check,
+  Play,
+  Pause,
+  SkipForward,
+  RotateCcw,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { Snowfall } from "@/components/Snowfall";
 
@@ -21,6 +26,21 @@ interface AdminParticipant {
   name: string;
   isRevealed: boolean;
   revealedAt: string | null;
+  isRegistered?: boolean;
+}
+
+interface RegistrationSessionInfo {
+  status: "not_started" | "active" | "paused" | "completed";
+  currentTurn: number;
+  totalTurns: number;
+  turnDurationSeconds: number;
+  timeRemainingSeconds: number;
+  registeredCount: number;
+  totalParticipants: number;
+  activeParticipantId: string | null;
+  activeParticipantName: string | null;
+  isPaused: boolean;
+  turnExpiresAt: string | null;
 }
 
 interface AdminState {
@@ -30,6 +50,7 @@ interface AdminState {
   totalParticipants: number;
   revealedCount: number;
   pendingCount: number;
+  registrationSession?: RegistrationSessionInfo;
   participants: AdminParticipant[];
 }
 
@@ -42,6 +63,7 @@ export default function AdminDashboardPage() {
   const [state, setState] = useState<AdminState | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Authenticate Admin
   const handleLogin = async (e: React.FormEvent) => {
@@ -72,22 +94,58 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const fetchAdminData = async (pwd = password) => {
+  const fetchAdminData = useCallback(async (pwd = password) => {
     try {
-      setIsLoading(true);
       const res = await fetch("/api/admin/status", {
         headers: { "x-admin-password": pwd },
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setState(data.data);
-      } else {
-        setAuthError(data.error || "Failed to load event data.");
       }
     } catch {
-      setAuthError("Failed to fetch administrative data.");
+      // non-blocking
+    }
+  }, [password]);
+
+  // Live auto-refresh polling every 2 seconds when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = setInterval(() => {
+      fetchAdminData();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, fetchAdminData]);
+
+  // Execute registration control actions
+  const handleRegistrationAction = async (
+    action: "start" | "pause" | "resume" | "skip" | "revisit",
+    participantId?: string
+  ) => {
+    setActionLoading(true);
+    setActionMessage(null);
+
+    try {
+      const res = await fetch("/api/registration/control", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({ action, participantId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setActionMessage(`Error: ${data.error || "Action failed."}`);
+      } else {
+        setActionMessage(data.message || `Action '${action}' successful.`);
+        await fetchAdminData();
+      }
+    } catch {
+      setActionMessage("Network error executing action.");
     } finally {
-      setIsLoading(false);
+      setActionLoading(false);
     }
   };
 
@@ -98,11 +156,16 @@ export default function AdminDashboardPage() {
     return state.participants.filter((p) => p.name.toLowerCase().includes(q));
   }, [state, filterQuery]);
 
+  const regSession = state?.registrationSession;
+  const isRegActive = regSession?.status === "active";
+  const isRegPaused = regSession?.status === "paused";
+  const isRegCompleted = regSession?.status === "completed" || (regSession && regSession.registeredCount >= regSession.totalParticipants);
+
   return (
     <div className="relative min-h-screen bg-gradient-to-b from-[#05150d] via-[#092215] to-[#040f09] text-white">
       <Snowfall />
 
-      {/* Decorative Lights */}
+      {/* Decorative Top Lights */}
       <div className="h-1 bg-gradient-to-r from-red-600 via-amber-400 to-emerald-600" />
 
       {/* Header */}
@@ -147,7 +210,7 @@ export default function AdminDashboardPage() {
                 Organizer Authentication
               </h2>
               <p className="mt-2 text-center text-xs text-emerald-200/80">
-                Please enter the organizer master password to access event controls and participation statistics.
+                Please enter the organizer master password to access event controls and supervise registration.
               </p>
 
               <form onSubmit={handleLogin} className="mt-6 space-y-4">
@@ -168,7 +231,7 @@ export default function AdminDashboardPage() {
                     className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-3 text-sm text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                   />
                   <p className="mt-1.5 text-[11px] text-emerald-300/60">
-                    Default: <code className="text-amber-300">SantaMagic2024!</code> (or configured via ADMIN_PASSWORD)
+                    Default: <code className="text-amber-300">SantaMagic2024!</code>
                   </p>
                 </div>
 
@@ -205,6 +268,122 @@ export default function AdminDashboardPage() {
               </div>
             )}
 
+            {/* ===============================================================
+                SUPERVISED ONE-AT-A-TIME REGISTRATION CONTROL PANEL
+               =============================================================== */}
+            <div className="rounded-3xl border border-amber-400/40 bg-gradient-to-br from-[#0c2e1c] via-[#092215] to-[#05150d] p-6 shadow-2xl backdrop-blur-xl">
+              <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="flex h-6 items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 text-xs font-bold text-amber-300">
+                      <Clock className="h-3.5 w-3.5" />
+                      Supervised Registration System
+                    </span>
+                    <span className="text-xs text-emerald-300/80">
+                      60-second window per turn
+                    </span>
+                  </div>
+
+                  <h2 className="font-serif text-2xl font-extrabold text-white">
+                    {isRegCompleted ? (
+                      <span className="text-emerald-400 flex items-center gap-2">
+                        <CheckCircle2 className="h-6 w-6" />
+                        Registration Completed (18/18 Registered)
+                      </span>
+                    ) : isRegActive ? (
+                      <>
+                        Turn {regSession?.currentTurn} of {regSession?.totalTurns}{" "}
+                        {regSession?.activeParticipantName && (
+                          <span className="gold-text">
+                            ({regSession.activeParticipantName})
+                          </span>
+                        )}
+                      </>
+                    ) : isRegPaused ? (
+                      <span className="text-amber-300">
+                        Registration Paused (Turn {regSession?.currentTurn})
+                      </span>
+                    ) : (
+                      <span>Registration Not Started</span>
+                    )}
+                  </h2>
+
+                  <p className="mt-1 text-xs text-emerald-200/80 max-w-xl">
+                    Registration proceeds one participant at a time with a 60-second window. Each participant establishes their secret PIN. Once confirmed, the turn immediately advances.
+                  </p>
+                </div>
+
+                {/* Right: Live Countdown Dial & Primary Controls */}
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Countdown Badge */}
+                  {regSession && regSession.status !== "not_started" && !isRegCompleted && (
+                    <div
+                      className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 shadow-inner ${
+                        isRegPaused
+                          ? "border-amber-500/40 bg-amber-950/40 text-amber-300"
+                          : regSession.timeRemainingSeconds <= 10
+                          ? "border-red-500/60 bg-red-950/60 text-red-200 animate-pulse"
+                          : "border-amber-400/40 bg-[#06180f] text-amber-300"
+                      }`}
+                    >
+                      <Clock className="h-5 w-5" />
+                      <div>
+                        <div className="font-mono text-2xl font-bold leading-none">
+                          {regSession.timeRemainingSeconds}s
+                        </div>
+                        <div className="text-[9px] uppercase tracking-wider text-emerald-300/60 font-semibold">
+                          {isRegPaused ? "Paused" : "Remaining"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Primary Action Button: Start / Pause / Resume */}
+                  {(!regSession || regSession.status === "not_started") ? (
+                    <button
+                      onClick={() => handleRegistrationAction("start")}
+                      disabled={actionLoading}
+                      className="group flex items-center gap-2 rounded-2xl border-2 border-amber-300 bg-gradient-to-r from-emerald-600 to-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-[0_4px_20px_rgba(5,150,105,0.4)] transition-all hover:scale-105 hover:brightness-110 disabled:opacity-50"
+                    >
+                      <Play className="h-4 w-4 fill-white" />
+                      <span>Start Registration</span>
+                    </button>
+                  ) : isRegActive ? (
+                    <button
+                      onClick={() => handleRegistrationAction("pause")}
+                      disabled={actionLoading}
+                      className="flex items-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-950/70 px-5 py-3 text-xs font-bold text-amber-200 hover:bg-amber-900/80 transition-colors disabled:opacity-50"
+                    >
+                      <Pause className="h-4 w-4" />
+                      <span>Pause Turn</span>
+                    </button>
+                  ) : isRegPaused ? (
+                    <button
+                      onClick={() => handleRegistrationAction("resume")}
+                      disabled={actionLoading}
+                      className="flex items-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-900/80 px-5 py-3 text-xs font-bold text-white hover:bg-emerald-800 transition-colors disabled:opacity-50"
+                    >
+                      <Play className="h-4 w-4 fill-white" />
+                      <span>Resume Turn</span>
+                    </button>
+                  ) : null}
+
+                  {/* Skip Turn Button */}
+                  {regSession && (isRegActive || isRegPaused) && !isRegCompleted && (
+                    <button
+                      onClick={() => handleRegistrationAction("skip")}
+                      disabled={actionLoading}
+                      title="Skip current turn and advance to the next participant"
+                      className="flex items-center gap-1.5 rounded-2xl border border-amber-400/30 bg-[#0a2618] px-4 py-3 text-xs font-semibold text-amber-300 hover:bg-[#123824] transition-colors disabled:opacity-50"
+                    >
+                      <SkipForward className="h-4 w-4" />
+                      <span>Skip Turn</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Cryptographic Privacy Assurance Card */}
             <div className="rounded-2xl border border-amber-400/30 bg-gradient-to-r from-[#0a2618]/90 via-[#123824]/90 to-[#0a2618]/90 p-5 shadow-lg backdrop-blur-md">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -217,7 +396,7 @@ export default function AdminDashboardPage() {
                       🔒 Zero-Knowledge Organizer-Blind Privacy Active
                     </h3>
                     <p className="mt-0.5 text-xs text-emerald-200/80">
-                      All assignments are AES-256-GCM encrypted using each participant&apos;s personal self-registered PIN. The server and this dashboard strictly have <strong>zero knowledge of personal PINs, recipient assignments, or mappings</strong>.
+                      All assignments are AES-256-GCM encrypted. The organizer dashboard strictly has <strong>zero knowledge of personal PINs, recipient assignments, or mappings</strong>.
                     </p>
                   </div>
                 </div>
@@ -234,31 +413,35 @@ export default function AdminDashboardPage() {
                   <Users className="h-4 w-4 text-amber-400" />
                 </div>
                 <p className="mt-2 text-3xl font-bold text-white">{state.totalParticipants}</p>
-                <p className="mt-1 text-[11px] text-emerald-300/70">All 18 members active</p>
+                <p className="mt-1 text-[11px] text-emerald-300/70">All 18 members</p>
               </div>
 
               <div className="christmas-glass-card rounded-2xl p-5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold tracking-wider text-emerald-300 uppercase">
-                    Revealed Gifts
+                    Registered PINs
                   </span>
-                  <Eye className="h-4 w-4 text-emerald-400" />
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 </div>
-                <p className="mt-2 text-3xl font-bold text-emerald-400">{state.revealedCount}</p>
+                <p className="mt-2 text-3xl font-bold text-emerald-400">
+                  {state.participants.filter((p) => p.isRegistered).length} / 18
+                </p>
                 <p className="mt-1 text-[11px] text-emerald-300/70">
-                  {Math.round((state.revealedCount / state.totalParticipants) * 100)}% opened
+                  {Math.round(
+                    (state.participants.filter((p) => p.isRegistered).length / state.totalParticipants) * 100
+                  )}% established PIN
                 </p>
               </div>
 
               <div className="christmas-glass-card rounded-2xl p-5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold tracking-wider text-amber-300 uppercase">
-                    Pending Reveals
+                    Revealed Gifts
                   </span>
-                  <Clock className="h-4 w-4 text-amber-400" />
+                  <Eye className="h-4 w-4 text-amber-400" />
                 </div>
-                <p className="mt-2 text-3xl font-bold text-amber-300">{state.pendingCount}</p>
-                <p className="mt-1 text-[11px] text-emerald-300/70">Waiting to open</p>
+                <p className="mt-2 text-3xl font-bold text-amber-300">{state.revealedCount}</p>
+                <p className="mt-1 text-[11px] text-emerald-300/70">Opened secret gift</p>
               </div>
 
               <div className="christmas-glass-card rounded-2xl p-5">
@@ -269,21 +452,19 @@ export default function AdminDashboardPage() {
                   <Sparkles className="h-4 w-4 text-amber-400" />
                 </div>
                 <p className="mt-2 text-2xl font-bold text-white uppercase">{state.status}</p>
-                <p className="mt-1 text-[11px] text-emerald-300/70">
-                  {state.generatedAt ? `Locked ${new Date(state.generatedAt).toLocaleDateString()}` : "Ready"}
-                </p>
+                <p className="mt-1 text-[11px] text-emerald-300/70">Active & verified</p>
               </div>
             </div>
 
-            {/* Participation Directory Table */}
+            {/* Participation Directory Table with Supervision Controls */}
             <div className="rounded-2xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-serif text-lg font-bold text-white">
-                    Participant Status Directory
+                    Participant Registration & Status Directory
                   </h3>
                   <p className="mt-0.5 text-xs text-emerald-200/80">
-                    Live overview of participants who have opened their Christmas surprise.
+                    Live overview of all 18 participants with individual turn revisit controls.
                   </p>
                 </div>
 
@@ -303,35 +484,63 @@ export default function AdminDashboardPage() {
                   <thead>
                     <tr className="border-b border-amber-500/20 text-amber-300">
                       <th className="py-3 px-3 font-semibold uppercase">Participant</th>
-                      <th className="py-3 px-3 font-semibold uppercase">Reveal Status</th>
-                      <th className="py-3 px-3 font-semibold uppercase">Opened Timestamp</th>
+                      <th className="py-3 px-3 font-semibold uppercase">PIN Registration</th>
+                      <th className="py-3 px-3 font-semibold uppercase">Gift Reveal</th>
+                      <th className="py-3 px-3 font-semibold uppercase">Turn Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-950/60">
                     {filteredParticipants.map((p) => {
+                      const isActiveTurnTarget = regSession?.activeParticipantId === p.id;
+
                       return (
                         <tr key={p.id} className="transition-colors hover:bg-emerald-950/40">
                           <td className="py-3.5 px-3 font-medium text-white">
                             <div className="flex items-center gap-2">
                               <span className="text-base">👤</span>
                               <span className="font-semibold text-sm">{p.name}</span>
+                              {isActiveTurnTarget && (
+                                <span className="rounded-full border border-amber-400 bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold text-amber-300 animate-pulse">
+                                  Current Turn
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="py-3.5 px-3">
-                            {p.isRevealed ? (
+                            {p.isRegistered ? (
                               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
                                 <Check className="h-3 w-3" />
-                                <span>Gift Opened</span>
+                                <span>PIN Established</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-950/50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300">
                                 <Clock className="h-3 w-3" />
-                                <span>Pending</span>
+                                <span>Unregistered</span>
                               </span>
                             )}
                           </td>
-                          <td className="py-3.5 px-3 text-emerald-200/70 font-mono text-[11px]">
-                            {p.revealedAt ? new Date(p.revealedAt).toLocaleString() : "—"}
+                          <td className="py-3.5 px-3">
+                            {p.isRevealed ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                <Eye className="h-3 w-3" />
+                                <span>Opened</span>
+                              </span>
+                            ) : (
+                              <span className="text-emerald-300/50 text-[11px]">Unopened</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {!p.isRegistered && (
+                              <button
+                                onClick={() => handleRegistrationAction("revisit", p.id)}
+                                disabled={actionLoading}
+                                title={`Open a 60-second registration turn specifically for ${p.name}`}
+                                className="flex items-center gap-1 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-400/20 transition-colors disabled:opacity-50"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                <span>Revisit This Turn</span>
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
