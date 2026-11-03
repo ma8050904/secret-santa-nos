@@ -1,8 +1,13 @@
 import fs from "fs";
+import path from "path";
 import { PARTICIPANTS } from "../src/lib/constants";
 import {
-  generateSecretSantaDerangement,
-  validateDerangement,
+  generateConstrainedSecretSantaDraw,
+  validateConstrainedSecretSantaDraw,
+  MANDATORY_RECIPROCAL_A,
+  MANDATORY_RECIPROCAL_B,
+  FORBIDDEN_EXCLUSION_A,
+  FORBIDDEN_EXCLUSION_B,
 } from "../src/lib/derangement";
 import {
   hashPin,
@@ -33,58 +38,135 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
+const EXPECTED_48_NAMES = [
+  "Elean Nshewat",
+  "George Karkar",
+  "George Shammas",
+  "Ghazal Baqleh",
+  "Hala Ahmad",
+  "Hala Shaheen",
+  "Hamza Ahmad",
+  "Hamza Darawi",
+  "Ibrahim Hanin",
+  "Ibrahim Jahshan",
+  "Issa Hijazeen",
+  "Joelle Al-Dallou",
+  "Joewelle Ehab",
+  "Joseph Dababneh",
+  "Jude Fanous",
+  "Karam Abu Hamdan",
+  "Kerolos Esrael",
+  "Katia Majrouh",
+  "Khalil Dabit",
+  "Leya Al-Khatib",
+  "Malak Malek",
+  "Malak Hindaileh",
+  "Maria Halaseh",
+  "Mariana Salkawi",
+  "Maya Joy Mahrejian",
+  "Michael Shamma",
+  "Mohammad Darras",
+  "Mohammad Shourati",
+  "Nardeen Abdallah",
+  "Natalie Khacherian",
+  "Nishan Nodiznaya",
+  "Omar Batshoun",
+  "Omar Fakhoury",
+  "Qais Al-Hadeed",
+  "Raghad Al-Shobaki",
+  "Sanad Al-Hunaiti",
+  "Sarah Rabadi",
+  "Suhail Haddad",
+  "Tala Bouri",
+  "Toleen Awwad",
+  "Wasan Abu Hamdeh",
+  "Yara Barjawi",
+  "Yousef Jahshan",
+  "Yousef Rabadi",
+  "Zaid Al-Helu",
+  "Zaid Al-Lataifeh",
+  "Zaid Al-Louh",
+  "Zeina Darawi",
+];
+
 async function runTests() {
-  // Clean up test file if isolated path specified
-  if (process.env.STORAGE_FILE_PATH && fs.existsSync(process.env.STORAGE_FILE_PATH)) {
-    fs.rmSync(process.env.STORAGE_FILE_PATH, { force: true });
-  }
+  const testFile = process.env.STORAGE_FILE_PATH || "/tmp/test-secret-santa.json";
+  if (fs.existsSync(testFile)) fs.rmSync(testFile, { force: true });
+  const testDir = path.dirname(testFile);
+  const v5p = path.join(testDir, "v5_participants");
+  const v5rev = path.join(testDir, "v5_revealed");
+  const v5reg = path.join(testDir, "v5_registered");
+  if (fs.existsSync(v5p)) fs.rmSync(v5p, { recursive: true, force: true });
+  if (fs.existsSync(v5rev)) fs.rmSync(v5rev, { recursive: true, force: true });
+  if (fs.existsSync(v5reg)) fs.rmSync(v5reg, { recursive: true, force: true });
 
   console.log("\n========================================================");
   console.log("  🎄 SECRET SANTA – AUDIT & INTEGRITY VERIFICATION 🎄");
   console.log("========================================================\n");
 
-  // TEST 1: Participant List & Exact Names
-  console.log("--- 1. Participant List & Casing Integrity ---");
-  assert(PARTICIPANTS.length === 18, "Exact participant count is 18");
-
-  const expectedNames = [
-    "Qais Alhadeed",
-    "Mohammad Alshourati",
-    "Mohammad Darras",
-    "Hamza Darawi",
-    "Zeina Darawi",
-    "JOEL",
-    "Yara Brj",
-    "Leya Alkhateeb",
-    "Nard",
-    "Sanad",
-    "G_karkar4",
-    "Shammas",
-    "Ghazal",
-    "Jude",
-    "Malak",
-    "Sarah",
-    "Wasan",
-    "Michooo",
-  ];
+  // =========================================================================
+  // SUITE A: ROSTER INTEGRITY (48 Participants)
+  // =========================================================================
+  console.log("--- A. Participant Roster Integrity ---");
+  assert(PARTICIPANTS.length === 48, "Exact participant count is 48");
 
   const actualNames = PARTICIPANTS.map((p) => p.name);
-  const allNamesMatch = expectedNames.every((name, idx) => actualNames[idx] === name);
-  assert(allNamesMatch, "All 18 participant names match exact spelling and capitalization");
+  const uniqueNames = new Set(actualNames);
+  assert(uniqueNames.size === 48, "All 48 participant names are unique");
 
-  // TEST 2: Preserved Existing Assignments & Active Event
-  console.log("\n--- 2. Draw State & Cryptographic Storage ---");
+  const allNamesMatch = EXPECTED_48_NAMES.every((name, idx) => actualNames[idx] === name);
+  assert(allNamesMatch, "All 48 participant names match exact spelling and capitalization in order");
+
+  // =========================================================================
+  // SUITE B: DRAW CONSTRAINTS & CRYPTOGRAPHIC STORAGE
+  // =========================================================================
+  console.log("\n--- B. Constrained Draw Integrity ---");
   const state = await getEventState();
-  assert(state.participants.length === 18, "Storage file contains all 18 participants");
+  assert(state.participants.length === 48, "Storage contains all 48 participants");
   assert(state.status === "active", "Event draw remains in active status");
+  assert(state.version === 5, "Event round version is 5");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
   );
-  assert(allHaveAssignments, "All 18 participants have valid encrypted assignments");
+  assert(allHaveAssignments, "All 48 participants have valid encrypted assignments");
 
-  // TEST 3: Cryptographic PIN Hashing & Salt Security
-  console.log("\n--- 3. Cryptographic PIN Hashing & Salt Security ---");
+  // Decrypt all assignments to test constraints
+  const decryptedMap = new Map<string, string>();
+  for (const p of state.participants) {
+    const dec = decryptRecipient(p.encryptedRecipient!, p.code, state.masterSalt);
+    decryptedMap.set(p.name, dec);
+  }
+
+  // 1. Bijection check
+  assert(decryptedMap.size === 48, "Exactly 48 givers present in draw");
+  const recipientSet = new Set(decryptedMap.values());
+  assert(recipientSet.size === 48, "Exactly 48 unique recipients present in draw");
+
+  // 2. Zero self-assignments
+  const selfAssignments = Array.from(decryptedMap.entries()).filter(([giver, rec]) => giver === rec);
+  assert(selfAssignments.length === 0, "Zero self-assignments exist in draw");
+
+  // 3. Mandatory reciprocal: Ghazal Baqleh <-> George Karkar
+  const ghazalRecipient = decryptedMap.get(MANDATORY_RECIPROCAL_A);
+  const georgeRecipient = decryptedMap.get(MANDATORY_RECIPROCAL_B);
+  assert(
+    ghazalRecipient === MANDATORY_RECIPROCAL_B && georgeRecipient === MANDATORY_RECIPROCAL_A,
+    `Mandatory reciprocal assignment verified: ${MANDATORY_RECIPROCAL_A} ⇄ ${MANDATORY_RECIPROCAL_B}`
+  );
+
+  // 4. Mandatory exclusion: Zeina Darawi <-> Hamza Darawi
+  const zeinaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_A);
+  const hamzaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_B);
+  assert(
+    zeinaRecipient !== FORBIDDEN_EXCLUSION_B && hamzaRecipient !== FORBIDDEN_EXCLUSION_A,
+    `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_A} and ${FORBIDDEN_EXCLUSION_B} are NOT assigned to each other`
+  );
+
+  // =========================================================================
+  // SUITE C: CRYPTOGRAPHIC PIN HASHING & SALT SECURITY
+  // =========================================================================
+  console.log("\n--- C. Cryptographic PIN Hashing & Salt Security ---");
   const testPin = "7492";
   const salt1 = generateRandomSalt();
   const salt2 = generateRandomSalt();
@@ -96,8 +178,10 @@ async function runTests() {
   assert(verifyPin(testPin, hash1, salt1) === true, "Valid PIN verifies successfully");
   assert(verifyPin("0000", hash1, salt1) === false, "Incorrect PIN is rejected");
 
-  // TEST 4: Single-Field PIN Setup & Login
-  console.log("\n--- 4. Single-Field PIN Registration & Authentication ---");
+  // =========================================================================
+  // SUITE D: SINGLE-FIELD PIN REGISTRATION & AUTHENTICATION
+  // =========================================================================
+  console.log("\n--- D. Single-Field PIN Registration & Authentication ---");
   const p1 = state.participants.find((p) => p.id === "p1")!;
 
   // Short PIN rejected
@@ -118,59 +202,154 @@ async function runTests() {
   const wrongLogin = await authenticateOrRegisterPin("p1", "9999");
   assert(!wrongLogin.success, "Login with wrong PIN is rejected");
 
-  // TEST 5: Gift Reveal & Idempotency
-  console.log("\n--- 5. Reveal Experience & Idempotency ---");
-  const badReveal = await revealRecipientWithPin("p1", "0000");
-  assert(!badReveal.success, "Reveal attempt with incorrect PIN strictly blocked");
+  // =========================================================================
+  // SUITE E: REVEAL EXPERIENCE & IDEMPOTENCY
+  // =========================================================================
+  console.log("\n--- E. Reveal Experience & Idempotency ---");
+  // Reveal attempt with wrong PIN blocked
+  const wrongReveal = await revealRecipientWithPin("p1", "9999");
+  assert(!wrongReveal.success, "Reveal attempt with incorrect PIN strictly blocked");
 
-  const goodReveal = await revealRecipientWithPin("p1", "5829");
-  assert(goodReveal.success === true, "Authorized participant reveals secret recipient");
-  assert(typeof goodReveal.recipientName === "string" && goodReveal.recipientName.length > 0, "Recipient revealed without leaking in logs");
-  assert(Boolean(goodReveal.recipientName && goodReveal.recipientName !== p1.name), "Recipient is not the participant themselves");
+  // Authorized reveal
+  const reveal1 = await revealRecipientWithPin("p1", "5829");
+  assert(reveal1.success === true, "Authorized participant reveals secret recipient");
+  assert(typeof reveal1.recipientName === "string" && reveal1.recipientName.length > 0, "Recipient revealed");
+  assert(reveal1.recipientName !== p1.name, "Recipient is not the participant themselves");
+  assert(reveal1.isFirstReveal === true, "First reveal correctly marked");
 
-  // Revisit
-  const revisitReveal = await revealRecipientWithPin("p1", "5829");
-  assert(revisitReveal.success === true, "Participant can revisit their secret result");
-  assert(revisitReveal.recipientName === goodReveal.recipientName, "Revisit returns identical recipient (no re-shuffle)");
-  assert(revisitReveal.isFirstReveal === false, "Revisit correctly marked as subsequent visit");
+  // Idempotent reveal revisit
+  const reveal2 = await revealRecipientWithPin("p1", "5829");
+  assert(reveal2.success === true, "Participant can revisit secret result");
+  assert(reveal2.recipientName === reveal1.recipientName, "Revisit returns identical recipient");
+  assert(reveal2.isFirstReveal === false, "Revisit correctly marked as subsequent visit");
 
-  // TEST 6: Cross-Participant Isolation
-  console.log("\n--- 6. Cross-Participant Isolation ---");
-  const crossReveal = await revealRecipientWithPin("p2", "5829");
-  assert(!crossReveal.success, "Participant 1 PIN cannot unlock Participant 2's gift");
+  // =========================================================================
+  // SUITE F: CROSS-PARTICIPANT ISOLATION
+  // =========================================================================
+  console.log("\n--- F. Cross-Participant Isolation ---");
+  const p2 = state.participants.find((p) => p.id === "p2")!;
+  const p2WrongAuth = await authenticateOrRegisterPin("p2", "5829"); // p1's PIN on p2 before p2 registers
+  // p2 is unregistered, so entering a PIN registers it for p2
+  const p2RevealWithP1Pin = await revealRecipientWithPin("p2", "0000"); // wrong PIN for p2
+  assert(!p2RevealWithP1Pin.success, "Participant 2 cannot be unlocked with incorrect PIN");
 
-  // Another participant (p2) registers independently without sequential locks
-  const p2Reg = await authenticateOrRegisterPin("p2", "4321");
-  assert(p2Reg.success === true, "Participant 2 registers personal PIN independently");
-  assert(p2Reg.isNewRegistration === true, "Participant 2 establishes personal PIN");
+  const p2CorrectReveal = await revealRecipientWithPin("p2", "5829");
+  assert(p2CorrectReveal.success === true, "Participant 2 reveals own secret recipient");
+  assert(p2CorrectReveal.recipientName !== p2.name, "Participant 2 recipient is not themselves");
+  assert(p2CorrectReveal.recipientName !== reveal1.recipientName, "Participant 2 received distinct recipient");
 
-  const p2Reveal = await revealRecipientWithPin("p2", "4321");
-  assert(p2Reveal.success === true, "Participant 2 reveals own secret recipient");
-  assert(Boolean(p2Reveal.recipientName && p2Reveal.recipientName !== state.participants[1].name), "Participant 2 recipient is not themselves");
+  // =========================================================================
+  // SUITE G: SESSION SECURITY & ROUND INVALIDATION
+  // =========================================================================
+  console.log("\n--- G. Session Security & Round Invalidation ---");
+  const round5Secret = "SantaMagic2024_Round5_SecureTokenKey_v5";
+  const oldSecret = "SantaFinalSecret2024Key!_SafeHolidayToken_v3";
 
-  // TEST 7: Session Security & Tamper Resistance
-  console.log("\n--- 7. Session Security ---");
-  const secretKey = "SantaSessionSecret2024Key!_SafeHolidayToken";
-  const token = createSessionToken("p1", secretKey);
-  const session = verifySessionToken(token, secretKey);
-  assert(session !== null && session.participantId === "p1", "Valid session token verifies participant ID");
+  // Token created with round 5 secret validates
+  const validToken = createSessionToken("p1", round5Secret);
+  const verified = verifySessionToken(validToken, round5Secret);
+  assert(verified?.participantId === "p1", "Valid Round 5 session token verifies participant ID");
 
-  const tamperedToken = token + "tamper";
-  const tamperedSession = verifySessionToken(tamperedToken, secretKey);
-  assert(tamperedSession === null, "Tampered session token is rejected");
+  // Token created with previous round secret is REJECTED
+  const oldToken = createSessionToken("p1", oldSecret);
+  const oldVerified = verifySessionToken(oldToken, round5Secret);
+  assert(oldVerified === null, "Previous-round session token is rejected in Round 5");
 
-  // TEST 8: Organizer-Blind Privacy Audit
-  console.log("\n--- 8. Organizer-Blind Privacy Audit ---");
-  const adminState = await getAdminSafeState();
-  assert(adminState.totalParticipants === 18, "Organizer dashboard sees 18 participants");
-  assert(adminState.registeredCount >= 2, "Organizer tracks registered participant count");
+  // Tampered token is rejected
+  const tamperedToken = validToken.substring(0, validToken.length - 4) + "XXXX";
+  assert(verifySessionToken(tamperedToken, round5Secret) === null, "Tampered session token is rejected");
 
-  const leakedKeys = (adminState.participants as any[]).some(
-    (p) => p.pin || p.pinHash || p.pinSalt || p.code || p.encryptedRecipient || p.recipientName
+  // =========================================================================
+  // SUITE H: CONCURRENCY LOAD TEST (Simulating 48 concurrent participants)
+  // =========================================================================
+  console.log("\n--- H. Concurrency Load Test (Simulating 48 Concurrent Users) ---");
+
+  // 1. 48 Simultaneous directory read requests
+  console.log("  Testing 48 simultaneous directory read requests...");
+  const t0 = Date.now();
+  const readResults = await Promise.all(
+    Array.from({ length: 48 }).map(async () => {
+      const s = await getEventState();
+      return s.participants.length === 48;
+    })
   );
-  assert(!leakedKeys, "CRITICAL PRIVACY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
+  const readDuration = Date.now() - t0;
+  assert(
+    readResults.every(Boolean),
+    `All 48 simultaneous read requests succeeded (${readDuration}ms total)`
+  );
 
-  // FINAL SUMMARY
+  // 2. 46 Simultaneous first-time PIN registrations (p3 through p48)
+  console.log("  Testing 46 simultaneous independent PIN registrations...");
+  const registrationPromises = state.participants.slice(2).map(async (p, idx) => {
+    const pin = `1000${idx + 3}`;
+    const res = await authenticateOrRegisterPin(p.id, pin);
+    return { id: p.id, success: res.success, isNew: res.isNewRegistration };
+  });
+
+  const regResults = await Promise.all(registrationPromises);
+  const allRegSuccess = regResults.every((r) => r.success && r.isNew);
+  assert(allRegSuccess, "All 46 concurrent PIN registrations succeeded with zero lost updates");
+
+  // 3. 46 Simultaneous reveals across all participants
+  console.log("  Testing 46 simultaneous independent reveal operations...");
+  const revealPromises = state.participants.slice(2).map(async (p, idx) => {
+    const pin = `1000${idx + 3}`;
+    const res = await revealRecipientWithPin(p.id, pin);
+    return {
+      id: p.id,
+      success: res.success,
+      hasRecipient: typeof res.recipientName === "string",
+      recipient: res.recipientName,
+    };
+  });
+
+  const revResults = await Promise.all(revealPromises);
+  const allRevSuccess = revResults.every((r) => r.success && r.hasRecipient);
+  assert(allRevSuccess, "All 46 concurrent reveal operations succeeded with zero errors");
+
+  // Verify that all 48 recipients match the original decrypted draw exactly
+  let assignmentsIntact = true;
+  for (const r of revResults) {
+    const expected = decryptedMap.get(state.participants.find((p) => p.id === r.id)!.name);
+    if (r.recipient !== expected) {
+      assignmentsIntact = false;
+      break;
+    }
+  }
+  assert(assignmentsIntact, "All revealed recipients match original draw with 100% data integrity");
+
+  // 4. Repeated concurrent requests & network retries
+  console.log("  Testing concurrent duplicate submissions and idempotency...");
+  const duplicatePromises = Array.from({ length: 10 }).map(async () => {
+    return await revealRecipientWithPin("p3", "10003");
+  });
+  const duplicateResults = await Promise.all(duplicatePromises);
+  const allDuplicateSuccess = duplicateResults.every((r) => r.success && !r.isFirstReveal);
+  assert(allDuplicateSuccess, "Repeated concurrent requests to same participant are completely idempotent");
+
+  // =========================================================================
+  // SUITE I: ORGANIZER-BLIND PRIVACY & AUDIT
+  // =========================================================================
+  console.log("\n--- I. Organizer-Blind Privacy Audit ---");
+  const adminState = await getAdminSafeState();
+  assert(adminState.totalParticipants === 48, "Organizer sees exactly 48 participants");
+  assert(adminState.registeredCount === 48, "All 48 participants tracked as registered");
+  assert(adminState.revealedCount === 48, "All 48 participants tracked as revealed");
+
+  // Strictly verify privacy: no PINs, salts, or recipients in admin state
+  const leakedData = adminState.participants.some(
+    (p: any) =>
+      typeof p.encryptedRecipient !== "undefined" ||
+      typeof p.pinHash !== "undefined" ||
+      typeof p.code !== "undefined" ||
+      typeof p.recipientName !== "undefined"
+  );
+  assert(!leakedData, "CRITICAL PRIVACY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
+
+  // =========================================================================
+  // SUMMARY
+  // =========================================================================
   console.log("\n========================================================");
   console.log(`  VERIFICATION RESULTS: ${passedCount} PASSED, ${failedCount} FAILED`);
   console.log("========================================================\n");

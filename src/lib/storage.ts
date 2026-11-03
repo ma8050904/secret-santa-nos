@@ -12,7 +12,7 @@ import {
   encryptRecipient,
   decryptRecipient,
 } from "./crypto";
-import { generateSecretSantaDerangement } from "./derangement";
+import { generateConstrainedSecretSantaDraw } from "./derangement";
 
 export interface StoredParticipant {
   id: string;
@@ -37,12 +37,23 @@ export interface EventState {
   participants: StoredParticipant[];
 }
 
+export interface ParticipantRuntimeState {
+  participantId: string;
+  name: string;
+  pinHash: string;
+  pinSalt: string;
+  encryptedRecipient: string; // AES-256-GCM encrypted with participant's personal PIN
+  encryptedWithPin: boolean;
+  isRevealed: boolean;
+  revealedAt: string | null;
+  registeredAt: string;
+}
+
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
 function getStorageFilePath(): string {
   if (process.env.STORAGE_FILE_PATH) {
     return process.env.STORAGE_FILE_PATH;
   }
-  // Try local .data directory first
   const localDir = path.join(process.cwd(), ".data");
   if (fs.existsSync(localDir) || !process.env.VERCEL) {
     try {
@@ -57,16 +68,38 @@ function getStorageFilePath(): string {
   return path.join("/tmp", "secret-santa-event.json");
 }
 
+function getLocalParticipantDir(): string {
+  const base = getStorageFilePath();
+  const dir = path.join(path.dirname(base), "v5_participants");
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore in read-only lambdas
+    }
+  }
+  return dir;
+}
+
 let inMemoryStateCache: EventState | null = null;
 let inMemoryCacheTimestamp = 0;
-const CACHE_TTL_MS = 6000;
+const CACHE_TTL_MS = 4000;
+
+const KNOWN_BLOB_BASE = "https://ygkog8lebahiid0k.private.blob.vercel-storage.com";
 const KNOWN_BLOB_URL =
-  process.env.BLOB_URL ||
-  "https://ygkog8lebahiid0k.private.blob.vercel-storage.com/secret-santa-event.json";
+  process.env.BLOB_URL || `${KNOWN_BLOB_BASE}/secret-santa-event.json`;
+
 let writeLock: Promise<void> = Promise.resolve();
 
+// Concurrency-safe in-memory runtime caches
+const runtimeParticipantCache = new Map<string, ParticipantRuntimeState>();
+const revealedParticipantIds = new Set<string>();
+const registeredParticipantIds = new Set<string>();
+let lastMarkersSyncTimestamp = 0;
+const MARKERS_TTL_MS = 3000;
+
 /**
- * Initializes a clean initial state with the exact 18 participants
+ * Initializes a clean initial state with the exact 48 participants
  */
 function createInitialState(): EventState {
   const masterSalt = crypto.randomBytes(16).toString("hex");
@@ -88,7 +121,7 @@ function createInitialState(): EventState {
   });
 
   return {
-    version: 1,
+    version: 5,
     status: "uninitialized",
     createdAt: new Date().toISOString(),
     generatedAt: null,
@@ -98,26 +131,76 @@ function createInitialState(): EventState {
 }
 
 /**
+ * Syncs lightweight revealed/registered markers from Vercel Blob / local disk
+ */
+async function syncMarkers(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastMarkersSyncTimestamp < MARKERS_TTL_MS) {
+    return;
+  }
+
+  // 1. Cloud Blob sync (only when not running in isolated local test mode)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const [revealedList, registeredList] = await Promise.all([
+        list({ prefix: "v5/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v5/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+      ]);
+
+      for (const b of revealedList.blobs) {
+        const id = b.pathname.replace("v5/revealed/", "");
+        if (id) revealedParticipantIds.add(id);
+      }
+      for (const b of registeredList.blobs) {
+        const id = b.pathname.replace("v5/registered/", "");
+        if (id) registeredParticipantIds.add(id);
+      }
+      lastMarkersSyncTimestamp = now;
+      return;
+    } catch (err) {
+      console.warn("Notice: Blob markers sync:", err);
+    }
+  }
+
+  // 2. Local disk sync
+  try {
+    const localDir = path.dirname(getStorageFilePath());
+    const revealedDir = path.join(localDir, "v5_revealed");
+    const registeredDir = path.join(localDir, "v5_registered");
+
+    if (fs.existsSync(revealedDir)) {
+      const files = fs.readdirSync(revealedDir);
+      for (const f of files) revealedParticipantIds.add(f);
+    }
+    if (fs.existsSync(registeredDir)) {
+      const files = fs.readdirSync(registeredDir);
+      for (const f of files) registeredParticipantIds.add(f);
+    }
+    lastMarkersSyncTimestamp = now;
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Reads event state from persistent storage (Vercel Private Blob when available, or local filesystem)
  */
 export async function getEventState(forceFresh = false): Promise<EventState> {
   const now = Date.now();
-  if (!forceFresh && inMemoryStateCache && (now - inMemoryCacheTimestamp < CACHE_TTL_MS)) {
+  if (!forceFresh && inMemoryStateCache && now - inMemoryCacheTimestamp < CACHE_TTL_MS) {
     return inMemoryStateCache;
   }
 
-  // 1. Try reading from Vercel Private Blob store if configured
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  // 1. Try reading from Vercel Private Blob store if configured (and not running in isolated local test mode)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       let streamRes: any = null;
       try {
-        // Direct read eliminates 600ms list() roundtrip
         streamRes = await get(`${KNOWN_BLOB_URL}?t=${now}`, {
           access: "private",
           token: process.env.BLOB_READ_WRITE_TOKEN,
         });
       } catch {
-        // Fallback to list lookup if direct URL fails
         const listRes = await list({
           prefix: "secret-santa-event.json",
           token: process.env.BLOB_READ_WRITE_TOKEN,
@@ -134,6 +217,18 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
       if (streamRes && streamRes.stream) {
         const text = await new Response(streamRes.stream).text();
         const parsed: EventState = JSON.parse(text);
+
+        // Merge active markers into parsed state
+        await syncMarkers();
+        for (const p of parsed.participants) {
+          if (revealedParticipantIds.has(p.id)) {
+            p.isRevealed = true;
+          }
+          if (registeredParticipantIds.has(p.id)) {
+            p.pinHash = p.pinHash || "registered_marker_present";
+          }
+        }
+
         inMemoryStateCache = parsed;
         inMemoryCacheTimestamp = Date.now();
         return parsed;
@@ -152,30 +247,26 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
     if (fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
       const data = await fs.promises.readFile(/*turbopackIgnore: true*/ filePath, "utf-8");
       const parsed: EventState = JSON.parse(data);
-      inMemoryStateCache = parsed;
-      inMemoryCacheTimestamp = Date.now();
 
-      // Seed to blob if blob token is present
-      if (process.env.BLOB_READ_WRITE_TOKEN) {
-        try {
-          await put("secret-santa-event.json", data, {
-            access: "private",
-            addRandomSuffix: false,
-            allowOverwrite: true,
-            token: process.env.BLOB_READ_WRITE_TOKEN,
-          });
-        } catch {
-          // ignore background seed error
+      await syncMarkers();
+      for (const p of parsed.participants) {
+        if (revealedParticipantIds.has(p.id)) {
+          p.isRevealed = true;
+        }
+        if (registeredParticipantIds.has(p.id)) {
+          p.pinHash = p.pinHash || "registered_marker_present";
         }
       }
 
+      inMemoryStateCache = parsed;
+      inMemoryCacheTimestamp = Date.now();
       return parsed;
     }
   } catch (err) {
-    console.error("Warning: Failed to read from storage file, reinitializing", err);
+    console.error("Warning: Failed to read from storage file:", err);
   }
 
-  // In production with BLOB_READ_WRITE_TOKEN, NEVER auto-reinitialize or overwrite existing draw!
+  // In production with BLOB_READ_WRITE_TOKEN, NEVER auto-reinitialize or clobber existing draw!
   if (inMemoryStateCache) {
     return inMemoryStateCache;
   }
@@ -188,7 +279,6 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
   const initial = createInitialState();
   await saveEventState(initial);
 
-  // Auto-generate initial assignments so the event is ready immediately
   try {
     await generateAssignments(true);
     return await getEventState();
@@ -206,12 +296,11 @@ export async function saveEventState(state: EventState): Promise<void> {
   inMemoryStateCache = state;
   inMemoryCacheTimestamp = Date.now();
 
-  // Queue write operations through promise chain to ensure atomic sequential execution
   writeLock = writeLock.then(async () => {
     const serialized = JSON.stringify(state, null, 2);
 
-    // 1. Persist to Vercel Private Blob if configured
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
+    // 1. Persist to Vercel Private Blob if configured (and not in isolated test mode)
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
       try {
         await put("secret-santa-event.json", serialized, {
           access: "private",
@@ -236,7 +325,7 @@ export async function saveEventState(state: EventState): Promise<void> {
       await fs.promises.writeFile(tempPath, serialized, "utf-8");
       await fs.promises.rename(tempPath, filePath);
     } catch {
-      // In read-only serverless lambdas, local file write may be non-writable, which is expected
+      // In read-only serverless lambdas, local file write may be non-writable
     }
   });
 
@@ -244,7 +333,169 @@ export async function saveEventState(state: EventState): Promise<void> {
 }
 
 /**
- * Generates the Secret Santa assignments (ONLY used when initializing brand new event)
+ * Reads an isolated participant's runtime state (dedicated blob / local file)
+ */
+export async function getParticipantRuntimeState(
+  participantId: string
+): Promise<ParticipantRuntimeState | null> {
+  // Check in-memory runtime cache
+  if (runtimeParticipantCache.has(participantId)) {
+    return runtimeParticipantCache.get(participantId)!;
+  }
+
+  // 1. Check dedicated Vercel Blob for this participant (if not in isolated test mode)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const url = `${KNOWN_BLOB_BASE}/v5/participants/${participantId}.json`;
+      const res: any = await get(url, {
+        access: "private",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+
+      if (res && res.stream) {
+        const text = await new Response(res.stream).text();
+        const parsed: ParticipantRuntimeState = JSON.parse(text);
+        runtimeParticipantCache.set(participantId, parsed);
+        if (parsed.isRevealed) revealedParticipantIds.add(participantId);
+        if (parsed.pinHash) registeredParticipantIds.add(participantId);
+        return parsed;
+      }
+    } catch {
+      // ignore blob fetch miss
+    }
+  }
+
+  // 2. Check local dedicated participant file
+  try {
+    const localFile = path.join(getLocalParticipantDir(), `${participantId}.json`);
+    if (fs.existsSync(localFile)) {
+      const data = fs.readFileSync(localFile, "utf-8");
+      const parsed: ParticipantRuntimeState = JSON.parse(data);
+      runtimeParticipantCache.set(participantId, parsed);
+      if (parsed.isRevealed) revealedParticipantIds.add(participantId);
+      if (parsed.pinHash) registeredParticipantIds.add(participantId);
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Fallback to check master state participant record
+  const state = await getEventState();
+  const p = state.participants.find((item) => item.id === participantId);
+  if (p && p.pinHash && p.pinSalt && p.encryptedRecipient && p.encryptedWithPin) {
+    const fromMaster: ParticipantRuntimeState = {
+      participantId: p.id,
+      name: p.name,
+      pinHash: p.pinHash,
+      pinSalt: p.pinSalt,
+      encryptedRecipient: p.encryptedRecipient,
+      encryptedWithPin: true,
+      isRevealed: p.isRevealed,
+      revealedAt: p.revealedAt,
+      registeredAt: p.revealedAt || new Date().toISOString(),
+    };
+    runtimeParticipantCache.set(participantId, fromMaster);
+    if (fromMaster.isRevealed) revealedParticipantIds.add(participantId);
+    if (fromMaster.pinHash) registeredParticipantIds.add(participantId);
+    return fromMaster;
+  }
+
+  return null;
+}
+
+/**
+ * Saves an isolated participant's runtime state atomically and independently
+ */
+export async function saveParticipantRuntimeState(
+  state: ParticipantRuntimeState
+): Promise<void> {
+  // Update in-memory caches
+  runtimeParticipantCache.set(state.participantId, state);
+  if (state.isRevealed) revealedParticipantIds.add(state.participantId);
+  if (state.pinHash) registeredParticipantIds.add(state.participantId);
+
+  // Sync to inMemoryStateCache if present
+  if (inMemoryStateCache) {
+    const match = inMemoryStateCache.participants.find((p) => p.id === state.participantId);
+    if (match) {
+      match.pinHash = state.pinHash;
+      match.pinSalt = state.pinSalt;
+      match.encryptedRecipient = state.encryptedRecipient;
+      match.encryptedWithPin = true;
+      match.isRevealed = state.isRevealed;
+      match.revealedAt = state.revealedAt;
+    }
+  }
+
+  const serialized = JSON.stringify(state, null, 2);
+
+  // 1. Persist isolated blob to Vercel Blob (if not in isolated test mode)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const promises: Promise<any>[] = [
+        put(`v5/participants/${state.participantId}.json`, serialized, {
+          access: "private",
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        }),
+      ];
+
+      // Lightweight markers for lightning-fast directory queries
+      if (state.pinHash) {
+        promises.push(
+          put(`v5/registered/${state.participantId}`, "", {
+            access: "private",
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          })
+        );
+      }
+      if (state.isRevealed) {
+        promises.push(
+          put(`v5/revealed/${state.participantId}`, "", {
+            access: "private",
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          })
+        );
+      }
+
+      await Promise.all(promises);
+    } catch (err) {
+      console.error("Critical: Failed to save participant runtime blob:", err);
+    }
+  }
+
+  // 2. Persist to local filesystem
+  try {
+    const dir = getLocalParticipantDir();
+    const filePath = path.join(dir, `${state.participantId}.json`);
+    const tempPath = `${filePath}.${Date.now()}.${crypto.randomBytes(3).toString("hex")}.tmp`;
+    fs.writeFileSync(tempPath, serialized, "utf-8");
+    fs.renameSync(tempPath, filePath);
+
+    const localBaseDir = path.dirname(getStorageFilePath());
+    if (state.pinHash) {
+      const regDir = path.join(localBaseDir, "v5_registered");
+      if (!fs.existsSync(regDir)) fs.mkdirSync(regDir, { recursive: true });
+      fs.writeFileSync(path.join(regDir, state.participantId), "");
+    }
+    if (state.isRevealed) {
+      const revDir = path.join(localBaseDir, "v5_revealed");
+      if (!fs.existsSync(revDir)) fs.mkdirSync(revDir, { recursive: true });
+      fs.writeFileSync(path.join(revDir, state.participantId), "");
+    }
+  } catch {
+    // In read-only lambdas, local file writes may fail which is expected
+  }
+}
+
+/**
+ * Generates the Secret Santa assignments satisfying all Phase 3 constraints
  */
 export async function generateAssignments(force = false): Promise<{
   success: boolean;
@@ -255,12 +506,14 @@ export async function generateAssignments(force = false): Promise<{
   if (state.status === "active" && !force) {
     const revealedCount = state.participants.filter((p) => p.isRevealed).length;
     if (revealedCount > 0) {
-      throw new Error(`Cannot regenerate draw: ${revealedCount} participant(s) have already revealed their secret gift!`);
+      throw new Error(
+        `Cannot regenerate draw: ${revealedCount} participant(s) have already revealed their secret gift!`
+      );
     }
   }
 
-  // Run derangement
-  const pairs = generateSecretSantaDerangement(PARTICIPANTS);
+  // Run constrained derangement
+  const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
 
   // Map each pair to the participant's encrypted record
   for (const pair of pairs) {
@@ -285,19 +538,20 @@ export async function generateAssignments(force = false): Promise<{
   }
 
   state.status = "active";
+  state.version = 5;
   state.generatedAt = new Date().toISOString();
 
   await saveEventState(state);
 
   return {
     success: true,
-    message: "Secret Santa draw successfully generated with cryptographic organizer-blind encryption.",
+    message: "Constrained Secret Santa draw successfully generated for 48 participants.",
   };
 }
 
 /**
  * Authenticates with an existing PIN or establishes a personal PIN on first visit.
- * Single PIN entry: first visit sets the PIN, subsequent visits verify it.
+ * Highly concurrent: uses isolated per-participant storage to guarantee zero lost updates.
  */
 export async function authenticateOrRegisterPin(
   participantId: string,
@@ -313,40 +567,35 @@ export async function authenticateOrRegisterPin(
   };
   recipientName?: string;
 }> {
-  const state = await getEventState();
-  const participant = state.participants.find((p) => p.id === participantId);
+  const pin = rawPin ? rawPin.trim() : "";
+  if (!pin) {
+    return { success: false, error: "Please enter your PIN." };
+  }
+
+  const masterState = await getEventState();
+  const participant = masterState.participants.find((p) => p.id === participantId);
 
   if (!participant) {
-    return {
-      success: false,
-      error: "Participant not found.",
-    };
+    return { success: false, error: "Participant not found." };
   }
 
-  const pin = rawPin ? rawPin.trim() : "";
-
-  if (!pin) {
-    return {
-      success: false,
-      error: "Please enter your PIN.",
-    };
-  }
+  // Load isolated participant runtime state
+  const existingRuntime = await getParticipantRuntimeState(participantId);
 
   // CASE 1: Participant has ALREADY established a PIN
-  if (participant.pinHash && participant.pinSalt) {
-    const isValid = verifyPin(pin, participant.pinHash, participant.pinSalt);
+  if (existingRuntime && existingRuntime.pinHash && existingRuntime.pinSalt) {
+    const isValid = verifyPin(pin, existingRuntime.pinHash, existingRuntime.pinSalt);
     if (!isValid) {
       return { success: false, error: "Incorrect PIN. Please try again." };
     }
 
-    // Decrypt recipient name using verified PIN
     let recipientName: string | undefined;
     try {
-      if (participant.encryptedRecipient) {
+      if (existingRuntime.encryptedRecipient) {
         recipientName = decryptRecipient(
-          participant.encryptedRecipient,
+          existingRuntime.encryptedRecipient,
           pin,
-          participant.pinSalt
+          existingRuntime.pinSalt
         );
       }
     } catch (err) {
@@ -360,28 +609,21 @@ export async function authenticateOrRegisterPin(
       participant: {
         id: participant.id,
         name: participant.name,
-        isRevealed: participant.isRevealed,
+        isRevealed: existingRuntime.isRevealed,
       },
-      recipientName: participant.isRevealed ? recipientName : undefined,
+      recipientName: existingRuntime.isRevealed ? recipientName : undefined,
     };
   }
 
   // CASE 2: Participant is establishing their PIN for the FIRST TIME
   if (pin.length < 4) {
-    return {
-      success: false,
-      error: "PIN must be at least 4 digits or characters.",
-    };
+    return { success: false, error: "PIN must be at least 4 digits or characters." };
   }
-
   if (pin.length > 32) {
-    return {
-      success: false,
-      error: "PIN cannot exceed 32 characters.",
-    };
+    return { success: false, error: "PIN cannot exceed 32 characters." };
   }
 
-  // Decrypt the existing assignment using the seed code and master salt
+  // Decrypt original recipient from master draw state
   let originalRecipient: string;
   try {
     if (!participant.encryptedRecipient) {
@@ -390,30 +632,31 @@ export async function authenticateOrRegisterPin(
     originalRecipient = decryptRecipient(
       participant.encryptedRecipient,
       participant.code,
-      state.masterSalt
+      masterState.masterSalt
     );
   } catch (err) {
     console.error("Failed to decrypt seed recipient during PIN establishment:", err);
-    return {
-      success: false,
-      error: "Could not initialize assignment. Please try again.",
-    };
+    return { success: false, error: "Could not initialize assignment. Please try again." };
   }
 
-  // Generate individual salt for this participant's PIN
   const pinSalt = generateRandomSalt();
   const pinHash = hashPin(pin, pinSalt);
-
-  // Re-encrypt the recipient name with the key derived from the participant's new PIN
   const newEncryptedRecipient = encryptRecipient(originalRecipient, pin, pinSalt);
 
-  // Update participant record (preserving isRevealed status and timestamps)
-  participant.pinHash = pinHash;
-  participant.pinSalt = pinSalt;
-  participant.encryptedRecipient = newEncryptedRecipient;
-  participant.encryptedWithPin = true;
+  const newRuntimeState: ParticipantRuntimeState = {
+    participantId: participant.id,
+    name: participant.name,
+    pinHash,
+    pinSalt,
+    encryptedRecipient: newEncryptedRecipient,
+    encryptedWithPin: true,
+    isRevealed: false,
+    revealedAt: null,
+    registeredAt: new Date().toISOString(),
+  };
 
-  await saveEventState(state);
+  // Atomically save isolated participant blob
+  await saveParticipantRuntimeState(newRuntimeState);
 
   return {
     success: true,
@@ -421,15 +664,15 @@ export async function authenticateOrRegisterPin(
     participant: {
       id: participant.id,
       name: participant.name,
-      isRevealed: participant.isRevealed,
+      isRevealed: false,
     },
-    recipientName: participant.isRevealed ? originalRecipient : undefined,
+    recipientName: undefined,
   };
 }
 
 /**
  * Reveals the recipient name for an authenticated participant.
- * If this is the participant's first time opening the gift, marks them as revealed atomically.
+ * Highly concurrent: updates only the calling participant's isolated record.
  */
 export async function revealRecipientWithPin(
   participantId: string,
@@ -440,19 +683,17 @@ export async function revealRecipientWithPin(
   isFirstReveal?: boolean;
   error?: string;
 }> {
-  const state = await getEventState();
-  const participant = state.participants.find((p) => p.id === participantId);
+  const runtime = await getParticipantRuntimeState(participantId);
 
-  if (!participant || !participant.encryptedRecipient) {
-    return { success: false, error: "Participant not found." };
-  }
-
-  if (!participant.pinHash || !participant.pinSalt) {
-    return { success: false, error: "No personal PIN has been registered for this participant yet." };
+  if (!runtime || !runtime.encryptedRecipient || !runtime.pinHash || !runtime.pinSalt) {
+    return {
+      success: false,
+      error: "No personal PIN has been registered for this participant yet.",
+    };
   }
 
   // Verify PIN
-  const isValid = verifyPin(pin, participant.pinHash, participant.pinSalt);
+  const isValid = verifyPin(pin, runtime.pinHash, runtime.pinSalt);
   if (!isValid) {
     return { success: false, error: "Invalid PIN. Access denied." };
   }
@@ -460,21 +701,21 @@ export async function revealRecipientWithPin(
   let decryptedName: string;
   try {
     decryptedName = decryptRecipient(
-      participant.encryptedRecipient,
+      runtime.encryptedRecipient,
       pin,
-      participant.pinSalt
+      runtime.pinSalt
     );
   } catch (err) {
     console.error("Reveal decryption error:", err);
     return { success: false, error: "Decryption failed. Please ensure PIN is correct." };
   }
 
-  const isFirstReveal = !participant.isRevealed;
+  const isFirstReveal = !runtime.isRevealed;
 
   if (isFirstReveal) {
-    participant.isRevealed = true;
-    participant.revealedAt = new Date().toISOString();
-    await saveEventState(state);
+    runtime.isRevealed = true;
+    runtime.revealedAt = new Date().toISOString();
+    await saveParticipantRuntimeState(runtime);
   }
 
   return {
@@ -505,8 +746,15 @@ export async function getAdminSafeState(): Promise<{
   }[];
 }> {
   const state = await getEventState();
-  const revealedCount = state.participants.filter((p) => p.isRevealed).length;
-  const registeredCount = state.participants.filter((p) => Boolean(p.pinHash)).length;
+  await syncMarkers();
+
+  const revealedCount = state.participants.filter(
+    (p) => p.isRevealed || revealedParticipantIds.has(p.id)
+  ).length;
+
+  const registeredCount = state.participants.filter(
+    (p) => Boolean(p.pinHash) || registeredParticipantIds.has(p.id)
+  ).length;
 
   return {
     status: state.status,
@@ -516,13 +764,12 @@ export async function getAdminSafeState(): Promise<{
     registeredCount,
     revealedCount,
     pendingCount: state.participants.length - revealedCount,
-    // Strictly omit PINs, hashes, codes, and recipient mappings
     participants: state.participants.map((p) => ({
       id: p.id,
       name: p.name,
-      isRevealed: p.isRevealed,
+      isRevealed: Boolean(p.isRevealed || revealedParticipantIds.has(p.id)),
       revealedAt: p.revealedAt,
-      isRegistered: Boolean(p.pinHash),
+      isRegistered: Boolean(p.pinHash || registeredParticipantIds.has(p.id)),
     })),
   };
 }

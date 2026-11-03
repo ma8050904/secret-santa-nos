@@ -7,28 +7,14 @@ import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
 import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
+import { PARTICIPANTS } from "@/lib/constants";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
-const DEFAULT_PARTICIPANTS: ParticipantItem[] = [
-  { id: "p1", name: "Qais Alhadeed", isRevealed: false },
-  { id: "p2", name: "Mohammad Alshourati", isRevealed: false },
-  { id: "p3", name: "Mohammad Darras", isRevealed: false },
-  { id: "p4", name: "Hamza Darawi", isRevealed: false },
-  { id: "p5", name: "Zeina Darawi", isRevealed: false },
-  { id: "p6", name: "JOEL", isRevealed: false },
-  { id: "p7", name: "Yara Brj", isRevealed: false },
-  { id: "p8", name: "Leya Alkhateeb", isRevealed: false },
-  { id: "p9", name: "Nard", isRevealed: false },
-  { id: "p10", name: "Sanad", isRevealed: false },
-  { id: "p11", name: "G_karkar4", isRevealed: false },
-  { id: "p12", name: "Shammas", isRevealed: false },
-  { id: "p13", name: "Ghazal", isRevealed: false },
-  { id: "p14", name: "Jude", isRevealed: false },
-  { id: "p15", name: "Malak", isRevealed: false },
-  { id: "p16", name: "Sarah", isRevealed: false },
-  { id: "p17", name: "Wasan", isRevealed: false },
-  { id: "p18", name: "Michooo", isRevealed: false },
-];
+const DEFAULT_PARTICIPANTS: ParticipantItem[] = PARTICIPANTS.map((p) => ({
+  id: p.id,
+  name: p.name,
+  isRevealed: false,
+}));
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
