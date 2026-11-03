@@ -7,6 +7,7 @@ import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
 import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
+import { SantaChatModal } from "@/components/SantaChatModal";
 import { PARTICIPANTS } from "@/lib/constants";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
@@ -283,6 +284,11 @@ function SecretSantaApp() {
           onRevealSuccess={() => handleRevealSuccess(activeParticipant.id)}
         />
       )}
+
+      {/* =====================================================================
+          INTERACTIVE AI SANTA CHAT
+         ===================================================================== */}
+      <SantaChatModal />
     </div>
   );
 }
