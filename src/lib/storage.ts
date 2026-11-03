@@ -363,37 +363,6 @@ export async function getParticipantRuntimeState(
     } catch {
       // ignore blob fetch miss
     }
-
-    // Fallback: Check if participant had an established PIN in v5
-    try {
-      const urlV5 = `${KNOWN_BLOB_BASE}/v5/participants/${participantId}.json`;
-      const resV5: any = await get(urlV5, {
-        access: "private",
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-      if (resV5 && resV5.stream) {
-        const textV5 = await new Response(resV5.stream).text();
-        const parsedV5 = JSON.parse(textV5);
-        if (parsedV5.pinHash && parsedV5.pinSalt) {
-          const migrated: ParticipantRuntimeState = {
-            participantId,
-            name: parsedV5.name,
-            pinHash: parsedV5.pinHash,
-            pinSalt: parsedV5.pinSalt,
-            encryptedRecipient: "",
-            encryptedWithPin: false,
-            isRevealed: false,
-            revealedAt: null,
-            registeredAt: parsedV5.registeredAt || new Date().toISOString(),
-          };
-          runtimeParticipantCache.set(participantId, migrated);
-          registeredParticipantIds.add(participantId);
-          return migrated;
-        }
-      }
-    } catch {
-      // ignore
-    }
   }
 
   // 2. Check local dedicated participant file
@@ -406,31 +375,6 @@ export async function getParticipantRuntimeState(
       if (parsed.isRevealed) revealedParticipantIds.add(participantId);
       if (parsed.pinHash) registeredParticipantIds.add(participantId);
       return parsed;
-    }
-
-    // Local fallback: Check v5_participants for established PIN (production / dev only, not isolated test)
-    if (!process.env.STORAGE_FILE_PATH) {
-      const localFileV5 = path.join(path.dirname(getStorageFilePath()), "v5_participants", `${participantId}.json`);
-      if (fs.existsSync(localFileV5)) {
-        const dataV5 = fs.readFileSync(localFileV5, "utf-8");
-        const parsedV5 = JSON.parse(dataV5);
-        if (parsedV5.pinHash && parsedV5.pinSalt) {
-          const migrated: ParticipantRuntimeState = {
-            participantId,
-            name: parsedV5.name,
-            pinHash: parsedV5.pinHash,
-            pinSalt: parsedV5.pinSalt,
-            encryptedRecipient: "",
-            encryptedWithPin: false,
-            isRevealed: false,
-            revealedAt: null,
-            registeredAt: parsedV5.registeredAt || new Date().toISOString(),
-          };
-          runtimeParticipantCache.set(participantId, migrated);
-          registeredParticipantIds.add(participantId);
-          return migrated;
-        }
-      }
     }
   } catch {
     // ignore

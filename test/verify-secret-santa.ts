@@ -256,22 +256,28 @@ async function runTests() {
   // SUITE G: SESSION SECURITY & ROUND INVALIDATION
   // =========================================================================
   console.log("\n--- G. Session Security & Round Invalidation ---");
-  const round6Secret = "SantaMagic2024_Round6_SecureTokenKey_v6";
+  const round6FreshSecret = "SantaMagic2024_Round6_PinResetTokenKey_v6_fresh";
+  const preResetRound6Secret = "SantaMagic2024_Round6_SecureTokenKey_v6";
   const round5Secret = "SantaMagic2024_Round5_SecureTokenKey_v5";
 
-  // Token created with round 6 secret validates
-  const validToken = createSessionToken("p1", round6Secret);
-  const verified = verifySessionToken(validToken, round6Secret);
+  // Token created with fresh round 6 secret validates
+  const validToken = createSessionToken("p1", round6FreshSecret);
+  const verified = verifySessionToken(validToken, round6FreshSecret);
   assert(verified?.participantId === "p1", "Valid Round 6 session token verifies participant ID");
+
+  // Token created with pre-reset round 6 secret is REJECTED
+  const preResetToken = createSessionToken("p1", preResetRound6Secret);
+  const preResetVerified = verifySessionToken(preResetToken, round6FreshSecret);
+  assert(preResetVerified === null, "Pre-reset Round 6 session token is rejected after PIN reset");
 
   // Token created with previous round secret (Round 5) is REJECTED
   const oldToken = createSessionToken("p1", round5Secret);
-  const oldVerified = verifySessionToken(oldToken, round6Secret);
+  const oldVerified = verifySessionToken(oldToken, round6FreshSecret);
   assert(oldVerified === null, "Previous Round 5 session token is rejected in Round 6");
 
   // Tampered token is rejected
   const tamperedToken = validToken.substring(0, validToken.length - 4) + "XXXX";
-  assert(verifySessionToken(tamperedToken, round6Secret) === null, "Tampered session token is rejected");
+  assert(verifySessionToken(tamperedToken, round6FreshSecret) === null, "Tampered session token is rejected");
 
   // =========================================================================
   // SUITE H: CONCURRENCY LOAD TEST (Simulating 48 concurrent participants)
@@ -371,7 +377,7 @@ async function runTests() {
   function createMockRequest(url: string, body: any, sessionParticipantId?: string) {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (sessionParticipantId) {
-      const token = createSessionToken(sessionParticipantId, round6Secret);
+      const token = createSessionToken(sessionParticipantId, round6FreshSecret);
       headers["cookie"] = `santa_participant_session=${token}`;
     }
     return new NextRequest(url, {
