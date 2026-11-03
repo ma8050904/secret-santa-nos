@@ -70,7 +70,7 @@ function getStorageFilePath(): string {
 
 function getLocalParticipantDir(): string {
   const base = getStorageFilePath();
-  const dir = path.join(path.dirname(base), "v5_participants");
+  const dir = path.join(path.dirname(base), "v6_participants");
   if (!fs.existsSync(dir)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -121,7 +121,7 @@ function createInitialState(): EventState {
   });
 
   return {
-    version: 5,
+    version: 6,
     status: "uninitialized",
     createdAt: new Date().toISOString(),
     generatedAt: null,
@@ -143,16 +143,16 @@ async function syncMarkers(force = false): Promise<void> {
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       const [revealedList, registeredList] = await Promise.all([
-        list({ prefix: "v5/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
-        list({ prefix: "v5/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v6/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v6/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
       ]);
 
       for (const b of revealedList.blobs) {
-        const id = b.pathname.replace("v5/revealed/", "");
+        const id = b.pathname.replace("v6/revealed/", "");
         if (id) revealedParticipantIds.add(id);
       }
       for (const b of registeredList.blobs) {
-        const id = b.pathname.replace("v5/registered/", "");
+        const id = b.pathname.replace("v6/registered/", "");
         if (id) registeredParticipantIds.add(id);
       }
       lastMarkersSyncTimestamp = now;
@@ -165,8 +165,8 @@ async function syncMarkers(force = false): Promise<void> {
   // 2. Local disk sync
   try {
     const localDir = path.dirname(getStorageFilePath());
-    const revealedDir = path.join(localDir, "v5_revealed");
-    const registeredDir = path.join(localDir, "v5_registered");
+    const revealedDir = path.join(localDir, "v6_revealed");
+    const registeredDir = path.join(localDir, "v6_registered");
 
     if (fs.existsSync(revealedDir)) {
       const files = fs.readdirSync(revealedDir);
@@ -346,7 +346,7 @@ export async function getParticipantRuntimeState(
   // 1. Check dedicated Vercel Blob for this participant (if not in isolated test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      const url = `${KNOWN_BLOB_BASE}/v5/participants/${participantId}.json`;
+      const url = `${KNOWN_BLOB_BASE}/v6/participants/${participantId}.json`;
       const res: any = await get(url, {
         access: "private",
         token: process.env.BLOB_READ_WRITE_TOKEN,
@@ -363,6 +363,37 @@ export async function getParticipantRuntimeState(
     } catch {
       // ignore blob fetch miss
     }
+
+    // Fallback: Check if participant had an established PIN in v5
+    try {
+      const urlV5 = `${KNOWN_BLOB_BASE}/v5/participants/${participantId}.json`;
+      const resV5: any = await get(urlV5, {
+        access: "private",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+      if (resV5 && resV5.stream) {
+        const textV5 = await new Response(resV5.stream).text();
+        const parsedV5 = JSON.parse(textV5);
+        if (parsedV5.pinHash && parsedV5.pinSalt) {
+          const migrated: ParticipantRuntimeState = {
+            participantId,
+            name: parsedV5.name,
+            pinHash: parsedV5.pinHash,
+            pinSalt: parsedV5.pinSalt,
+            encryptedRecipient: "",
+            encryptedWithPin: false,
+            isRevealed: false,
+            revealedAt: null,
+            registeredAt: parsedV5.registeredAt || new Date().toISOString(),
+          };
+          runtimeParticipantCache.set(participantId, migrated);
+          registeredParticipantIds.add(participantId);
+          return migrated;
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 
   // 2. Check local dedicated participant file
@@ -375,6 +406,31 @@ export async function getParticipantRuntimeState(
       if (parsed.isRevealed) revealedParticipantIds.add(participantId);
       if (parsed.pinHash) registeredParticipantIds.add(participantId);
       return parsed;
+    }
+
+    // Local fallback: Check v5_participants for established PIN (production / dev only, not isolated test)
+    if (!process.env.STORAGE_FILE_PATH) {
+      const localFileV5 = path.join(path.dirname(getStorageFilePath()), "v5_participants", `${participantId}.json`);
+      if (fs.existsSync(localFileV5)) {
+        const dataV5 = fs.readFileSync(localFileV5, "utf-8");
+        const parsedV5 = JSON.parse(dataV5);
+        if (parsedV5.pinHash && parsedV5.pinSalt) {
+          const migrated: ParticipantRuntimeState = {
+            participantId,
+            name: parsedV5.name,
+            pinHash: parsedV5.pinHash,
+            pinSalt: parsedV5.pinSalt,
+            encryptedRecipient: "",
+            encryptedWithPin: false,
+            isRevealed: false,
+            revealedAt: null,
+            registeredAt: parsedV5.registeredAt || new Date().toISOString(),
+          };
+          runtimeParticipantCache.set(participantId, migrated);
+          registeredParticipantIds.add(participantId);
+          return migrated;
+        }
+      }
     }
   } catch {
     // ignore
@@ -434,7 +490,7 @@ export async function saveParticipantRuntimeState(
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       const promises: Promise<any>[] = [
-        put(`v5/participants/${state.participantId}.json`, serialized, {
+        put(`v6/participants/${state.participantId}.json`, serialized, {
           access: "private",
           addRandomSuffix: false,
           allowOverwrite: true,
@@ -445,7 +501,7 @@ export async function saveParticipantRuntimeState(
       // Lightweight markers for lightning-fast directory queries
       if (state.pinHash) {
         promises.push(
-          put(`v5/registered/${state.participantId}`, "", {
+          put(`v6/registered/${state.participantId}`, "1", {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -455,7 +511,7 @@ export async function saveParticipantRuntimeState(
       }
       if (state.isRevealed) {
         promises.push(
-          put(`v5/revealed/${state.participantId}`, "", {
+          put(`v6/revealed/${state.participantId}`, "1", {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -480,12 +536,12 @@ export async function saveParticipantRuntimeState(
 
     const localBaseDir = path.dirname(getStorageFilePath());
     if (state.pinHash) {
-      const regDir = path.join(localBaseDir, "v5_registered");
+      const regDir = path.join(localBaseDir, "v6_registered");
       if (!fs.existsSync(regDir)) fs.mkdirSync(regDir, { recursive: true });
       fs.writeFileSync(path.join(regDir, state.participantId), "");
     }
     if (state.isRevealed) {
-      const revDir = path.join(localBaseDir, "v5_revealed");
+      const revDir = path.join(localBaseDir, "v6_revealed");
       if (!fs.existsSync(revDir)) fs.mkdirSync(revDir, { recursive: true });
       fs.writeFileSync(path.join(revDir, state.participantId), "");
     }
@@ -538,8 +594,10 @@ export async function generateAssignments(force = false): Promise<{
   }
 
   state.status = "active";
-  state.version = 5;
+  state.version = 6;
   state.generatedAt = new Date().toISOString();
+  runtimeParticipantCache.clear();
+  revealedParticipantIds.clear();
 
   await saveEventState(state);
 
@@ -589,9 +647,32 @@ export async function authenticateOrRegisterPin(
       return { success: false, error: "Incorrect PIN. Please try again." };
     }
 
+    // Re-encrypt the new round recipient with this participant's verified PIN if not yet done for Round 6
+    if (!existingRuntime.encryptedRecipient || !existingRuntime.encryptedWithPin) {
+      try {
+        const originalRecipient = decryptRecipient(
+          participant.encryptedRecipient!,
+          participant.code,
+          masterState.masterSalt
+        );
+        existingRuntime.encryptedRecipient = encryptRecipient(
+          originalRecipient,
+          pin,
+          existingRuntime.pinSalt
+        );
+        existingRuntime.encryptedWithPin = true;
+        existingRuntime.isRevealed = false;
+        existingRuntime.revealedAt = null;
+        await saveParticipantRuntimeState(existingRuntime);
+      } catch (err) {
+        console.error("Failed to re-encrypt assignment with verified PIN:", err);
+        return { success: false, error: "Error initializing assignment with your PIN. Please try again." };
+      }
+    }
+
     let recipientName: string | undefined;
     try {
-      if (existingRuntime.encryptedRecipient) {
+      if (existingRuntime.encryptedRecipient && existingRuntime.isRevealed) {
         recipientName = decryptRecipient(
           existingRuntime.encryptedRecipient,
           pin,

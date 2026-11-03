@@ -2,18 +2,16 @@
 
 import React from "react";
 import Link from "next/link";
-import { Sparkles, User, LogOut } from "lucide-react";
+import { Sparkles, User } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
 import { BackgroundMusic } from "./BackgroundMusic";
 
 interface FestiveHeaderProps {
   activeParticipant?: ParticipantItem | null;
-  onLogout?: () => void;
 }
 
 export const FestiveHeader: React.FC<FestiveHeaderProps> = ({
   activeParticipant,
-  onLogout,
 }) => {
   // 24 decorative lights for the string garland
   const lights = [
@@ -72,15 +70,6 @@ export const FestiveHeader: React.FC<FestiveHeaderProps> = ({
             <div className="flex items-center gap-2 rounded-full border border-amber-400/30 bg-[#0c2e1c] px-3 py-1 text-xs text-amber-200">
               <User className="h-3.5 w-3.5 text-amber-400" />
               <span className="font-medium text-[11px] sm:text-xs">{activeParticipant.name}</span>
-              {onLogout && (
-                <button
-                  onClick={onLogout}
-                  title="Logout"
-                  className="ml-1 text-emerald-400 hover:text-white"
-                >
-                  <LogOut className="h-3 w-3" />
-                </button>
-              )}
             </div>
           )}
 

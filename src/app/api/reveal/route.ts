@@ -36,11 +36,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify session if available
+    // Verify session lock: bound strictly to authenticated participant
     const session = getSessionFromRequest(req);
     if (session && session.participantId !== participantId) {
       return NextResponse.json(
-        { success: false, error: "Access denied. You cannot access another participant's gift." },
+        { success: false, error: "Access denied. This session is locked to another participant." },
         { status: 403 }
       );
     }

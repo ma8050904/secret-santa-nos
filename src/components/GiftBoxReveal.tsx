@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import confetti from "canvas-confetti";
-import { Sparkles, Gift, LogOut } from "lucide-react";
+import { Sparkles, Gift } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
 
 interface GiftBoxRevealProps {
@@ -11,7 +11,6 @@ interface GiftBoxRevealProps {
   initialRecipientName?: string;
   initialIsRevealed?: boolean;
   onClose: () => void;
-  onLogout: () => void;
   onRevealSuccess: (participantId: string) => void;
 }
 
@@ -21,7 +20,6 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
   initialRecipientName,
   initialIsRevealed = false,
   onClose,
-  onLogout,
   onRevealSuccess,
 }) => {
   const [stage, setStage] = useState<"ready_to_open" | "opening" | "revealed">(
@@ -102,14 +100,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-in fade-in duration-300">
       <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#0a2618] via-[#071d13] to-[#04120b] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.85)]">
         {/* Header Controls */}
-        <div className="flex items-center justify-between pb-1">
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-1.5 text-xs text-amber-300/70 hover:text-white transition-colors"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            <span>Switch</span>
-          </button>
+        <div className="flex items-center justify-end pb-1">
           <button
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-500/25 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white"

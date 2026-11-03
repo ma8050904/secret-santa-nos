@@ -37,13 +37,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Prevent switching participant identity within an existing authenticated session
+    // Prevent switching participant identity within an existing authenticated session (Session Lock)
     const existingSession = getSessionFromRequest(req);
     if (existingSession && existingSession.participantId !== participantId) {
       return NextResponse.json(
         {
           success: false,
-          error: "An active session exists for another participant. Please log out first before switching accounts.",
+          error: "This session is locked to an authenticated participant account. Switching participants is not permitted.",
         },
         { status: 403 }
       );

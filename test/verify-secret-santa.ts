@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { NextRequest } from "next/server";
 import { PARTICIPANTS } from "../src/lib/constants";
 import {
   generateConstrainedSecretSantaDraw,
@@ -8,6 +9,8 @@ import {
   MANDATORY_RECIPROCAL_B,
   FORBIDDEN_EXCLUSION_A,
   FORBIDDEN_EXCLUSION_B,
+  TARGET_RECIPIENT,
+  TARGET_ALLOWED_GIVERS,
 } from "../src/lib/derangement";
 import {
   hashPin,
@@ -93,12 +96,12 @@ async function runTests() {
   const testFile = process.env.STORAGE_FILE_PATH || "/tmp/test-secret-santa.json";
   if (fs.existsSync(testFile)) fs.rmSync(testFile, { force: true });
   const testDir = path.dirname(testFile);
-  const v5p = path.join(testDir, "v5_participants");
-  const v5rev = path.join(testDir, "v5_revealed");
-  const v5reg = path.join(testDir, "v5_registered");
-  if (fs.existsSync(v5p)) fs.rmSync(v5p, { recursive: true, force: true });
-  if (fs.existsSync(v5rev)) fs.rmSync(v5rev, { recursive: true, force: true });
-  if (fs.existsSync(v5reg)) fs.rmSync(v5reg, { recursive: true, force: true });
+  for (const prefix of ["v5_", "v6_"]) {
+    for (const sub of ["participants", "revealed", "registered"]) {
+      const d = path.join(testDir, `${prefix}${sub}`);
+      if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
+    }
+  }
 
   console.log("\n========================================================");
   console.log("  🎄 SECRET SANTA – AUDIT & INTEGRITY VERIFICATION 🎄");
@@ -124,7 +127,7 @@ async function runTests() {
   const state = await getEventState();
   assert(state.participants.length === 48, "Storage contains all 48 participants");
   assert(state.status === "active", "Event draw remains in active status");
-  assert(state.version === 5, "Event round version is 5");
+  assert(state.version === 6, "Event round version is 6");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
@@ -162,6 +165,17 @@ async function runTests() {
     zeinaRecipient !== FORBIDDEN_EXCLUSION_B && hamzaRecipient !== FORBIDDEN_EXCLUSION_A,
     `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_A} and ${FORBIDDEN_EXCLUSION_B} are NOT assigned to each other`
   );
+
+  // 5. Mandatory Constraint 3: Who Receives Mohammad Shourati
+  const shouratiGiver = Array.from(decryptedMap.entries()).find(([_, rec]) => rec === TARGET_RECIPIENT)?.[0];
+  assert(
+    typeof shouratiGiver === "string" && (TARGET_ALLOWED_GIVERS as readonly string[]).includes(shouratiGiver),
+    `Mandatory Constraint 3 verified: Mohammad Shourati's giver is one of the 11 allowed participants (${shouratiGiver})`
+  );
+  const shouratiRecipientCount = Array.from(decryptedMap.values()).filter((r) => r === TARGET_RECIPIENT).length;
+  assert(shouratiRecipientCount === 1, "Exactly one participant receives Mohammad Shourati");
+  const shouratiOwnRecipient = decryptedMap.get(TARGET_RECIPIENT);
+  assert(shouratiOwnRecipient !== TARGET_RECIPIENT, "Mohammad Shourati is not self-assigned");
 
   // =========================================================================
   // SUITE C: CRYPTOGRAPHIC PIN HASHING & SALT SECURITY
@@ -242,22 +256,22 @@ async function runTests() {
   // SUITE G: SESSION SECURITY & ROUND INVALIDATION
   // =========================================================================
   console.log("\n--- G. Session Security & Round Invalidation ---");
+  const round6Secret = "SantaMagic2024_Round6_SecureTokenKey_v6";
   const round5Secret = "SantaMagic2024_Round5_SecureTokenKey_v5";
-  const oldSecret = "SantaFinalSecret2024Key!_SafeHolidayToken_v3";
 
-  // Token created with round 5 secret validates
-  const validToken = createSessionToken("p1", round5Secret);
-  const verified = verifySessionToken(validToken, round5Secret);
-  assert(verified?.participantId === "p1", "Valid Round 5 session token verifies participant ID");
+  // Token created with round 6 secret validates
+  const validToken = createSessionToken("p1", round6Secret);
+  const verified = verifySessionToken(validToken, round6Secret);
+  assert(verified?.participantId === "p1", "Valid Round 6 session token verifies participant ID");
 
-  // Token created with previous round secret is REJECTED
-  const oldToken = createSessionToken("p1", oldSecret);
-  const oldVerified = verifySessionToken(oldToken, round5Secret);
-  assert(oldVerified === null, "Previous-round session token is rejected in Round 5");
+  // Token created with previous round secret (Round 5) is REJECTED
+  const oldToken = createSessionToken("p1", round5Secret);
+  const oldVerified = verifySessionToken(oldToken, round6Secret);
+  assert(oldVerified === null, "Previous Round 5 session token is rejected in Round 6");
 
   // Tampered token is rejected
   const tamperedToken = validToken.substring(0, validToken.length - 4) + "XXXX";
-  assert(verifySessionToken(tamperedToken, round5Secret) === null, "Tampered session token is rejected");
+  assert(verifySessionToken(tamperedToken, round6Secret) === null, "Tampered session token is rejected");
 
   // =========================================================================
   // SUITE H: CONCURRENCY LOAD TEST (Simulating 48 concurrent participants)
@@ -346,6 +360,63 @@ async function runTests() {
       typeof p.recipientName !== "undefined"
   );
   assert(!leakedData, "CRITICAL PRIVACY GATE: Admin state strictly omits PINs, hashes, and recipient mappings");
+
+  // =========================================================================
+  // SUITE J: PARTICIPANT SESSION LOCK & IDENTITY PROTECTION
+  // =========================================================================
+  console.log("\n--- J. Participant Session Lock & Identity Protection ---");
+  const { POST: pinRoute } = await import("../src/app/api/auth/pin/route");
+  const { POST: revealRoute } = await import("../src/app/api/reveal/route");
+
+  function createMockRequest(url: string, body: any, sessionParticipantId?: string) {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (sessionParticipantId) {
+      const token = createSessionToken(sessionParticipantId, round6Secret);
+      headers["cookie"] = `santa_participant_session=${token}`;
+    }
+    return new NextRequest(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  }
+
+  // 1. Participant attempting to authenticate as another participant within active session
+  const switchReq = createMockRequest(
+    "http://localhost:3000/api/auth/pin",
+    { participantId: "p2", pin: "5829" },
+    "p1" // session belongs to p1
+  );
+  const switchRes = await pinRoute(switchReq);
+  const switchData = await switchRes.json();
+  assert(switchRes.status === 403, "Attempt to switch participant identity within active session is blocked with HTTP 403");
+  assert(
+    !switchData.error?.includes("log out"),
+    "Session lock error message does NOT contain 'log out'"
+  );
+  assert(
+    switchData.error?.includes("locked"),
+    "Session lock error message explicitly states session is locked"
+  );
+
+  // 2. Participant attempting to reveal another participant's recipient within active session
+  const crossRevealReq = createMockRequest(
+    "http://localhost:3000/api/reveal",
+    { participantId: "p2", pin: "5829" },
+    "p1" // session belongs to p1
+  );
+  const crossRevealRes = await revealRoute(crossRevealReq);
+  assert(crossRevealRes.status === 403, "Attempt to reveal another participant's gift within active session is blocked with HTTP 403");
+
+  // 3. Separate independent browser / device without session cookie can authenticate independently
+  const separateDeviceReq = createMockRequest(
+    "http://localhost:3000/api/auth/pin",
+    { participantId: "p2", pin: "5829" }
+    // No session cookie
+  );
+  const separateDeviceRes = await pinRoute(separateDeviceReq);
+  const separateDeviceData = await separateDeviceRes.json();
+  assert(separateDeviceRes.status === 200 && separateDeviceData.success === true, "Separate device without session cookie authenticates independently");
 
   // =========================================================================
   // SUMMARY

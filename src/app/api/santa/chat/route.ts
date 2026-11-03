@@ -93,6 +93,13 @@ const MODEL_TIMEOUTS: Record<string, number> = {
   "gemini-3.1-flash-lite": 8000,
 };
 
+const MODEL_THINKING_LEVELS: Record<string, string> = {
+  "gemini-3.8-flash": "LOW",
+  "gemini-3.5-flash": "LOW",
+  "gemini-3.5-flash-lite": "MINIMAL",
+  "gemini-3.1-flash-lite": "MINIMAL",
+};
+
 async function callGenerateContent(
   model: string,
   systemInstruction: string,
@@ -120,7 +127,7 @@ async function callGenerateContent(
           temperature: 0.8,
           maxOutputTokens: 450,
           thinkingConfig: {
-            thinkingLevel: "MINIMAL",
+            thinkingLevel: MODEL_THINKING_LEVELS[model] || "LOW",
           },
         },
       }),

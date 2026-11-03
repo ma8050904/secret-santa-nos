@@ -18,6 +18,22 @@ export const MANDATORY_RECIPROCAL_B = "George Karkar";
 export const FORBIDDEN_EXCLUSION_A = "Zeina Darawi";
 export const FORBIDDEN_EXCLUSION_B = "Hamza Darawi";
 
+// Constraint 3 (Corrected): Who Receives Mohammad Shourati
+export const TARGET_RECIPIENT = "Mohammad Shourati";
+export const TARGET_ALLOWED_GIVERS = [
+  "Michael Shamma",
+  "Mohammad Darras",
+  "Qais Al-Hadeed",
+  "Yara Barjawi",
+  "Zeina Darawi",
+  "Joewelle Ehab",
+  "Joseph Dababneh",
+  "George Shammas",
+  "Toleen Awwad",
+  "Wasan Abu Hamdeh",
+  "Hamza Darawi",
+] as const;
+
 /**
  * Validates whether an assignment satisfies all mathematical Secret Santa properties:
  * 1. Every participant is a giver exactly once
@@ -111,6 +127,23 @@ export function validateConstrainedSecretSantaDraw(
     return {
       valid: false,
       reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_B} cannot be assigned to ${FORBIDDEN_EXCLUSION_A}`,
+    };
+  }
+
+  // 3. Mandatory Constraint 3: Who Receives Mohammad Shourati
+  // Mohammad Shourati must be assigned as the recipient to exactly ONE randomly selected participant from TARGET_ALLOWED_GIVERS
+  const shouratiGivers = assignments.filter((a) => a.recipientName === TARGET_RECIPIENT);
+  if (shouratiGivers.length !== 1) {
+    return {
+      valid: false,
+      reason: `Constraint 3 violation: ${TARGET_RECIPIENT} must have exactly one giver, found ${shouratiGivers.length}`,
+    };
+  }
+  const giverOfShourati = shouratiGivers[0].giverName;
+  if (!TARGET_ALLOWED_GIVERS.includes(giverOfShourati as any)) {
+    return {
+      valid: false,
+      reason: `Constraint 3 violation: Giver of ${TARGET_RECIPIENT} must be one of the 11 allowed participants, but got "${giverOfShourati}"`,
     };
   }
 
@@ -224,19 +257,27 @@ export function generateConstrainedSecretSantaDraw(
 
     // Build assignment pairs for remaining participants
     const pairs: AssignmentPair[] = [];
-    let hasExclusionViolation = false;
+    let hasViolation = false;
 
     for (let i = 0; i < list.length; i++) {
       const giver = list[i];
       const recipient = list[(i + 1) % list.length];
 
-      // Check exclusion constraint
+      // Check exclusion constraint: Zeina <-> Hamza
       if (
         (giver.name === FORBIDDEN_EXCLUSION_A && recipient.name === FORBIDDEN_EXCLUSION_B) ||
         (giver.name === FORBIDDEN_EXCLUSION_B && recipient.name === FORBIDDEN_EXCLUSION_A)
       ) {
-        hasExclusionViolation = true;
+        hasViolation = true;
         break;
+      }
+
+      // Check constraint 3: If recipient is Mohammad Shourati, giver MUST be in TARGET_ALLOWED_GIVERS
+      if (recipient.name === TARGET_RECIPIENT) {
+        if (!TARGET_ALLOWED_GIVERS.includes(giver.name as any)) {
+          hasViolation = true;
+          break;
+        }
       }
 
       pairs.push({
@@ -247,7 +288,7 @@ export function generateConstrainedSecretSantaDraw(
       });
     }
 
-    if (hasExclusionViolation) {
+    if (hasViolation) {
       continue;
     }
 

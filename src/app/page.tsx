@@ -134,16 +134,20 @@ function SecretSantaApp() {
     }
   };
 
-  // Participant card clicked
+  // Participant card clicked (Session-Locked to active participant once authenticated)
   const handleSelectParticipant = useCallback(
     (p: ParticipantItem) => {
-      if (activeParticipant?.id === p.id && activePin) {
-        setShowRevealModal(true);
+      if (activeParticipant) {
+        if (activePin) {
+          setShowRevealModal(true);
+        } else {
+          setSelectedForAuth(activeParticipant);
+        }
         return;
       }
       setSelectedForAuth(p);
     },
-    [activeParticipant?.id, activePin]
+    [activeParticipant, activePin]
   );
 
   // PIN verification success
@@ -173,21 +177,6 @@ function SecretSantaApp() {
     [loadParticipants]
   );
 
-  // Logout
-  const handleLogout = useCallback(async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      // ignore
-    }
-    setActiveParticipant(null);
-    setActivePin(null);
-    setRevealedRecipient(undefined);
-    setIsCurrentlyRevealed(false);
-    setShowRevealModal(false);
-    setSelectedForAuth(null);
-  }, []);
-
   const handleRevealSuccess = useCallback((participantId: string) => {
     setIsCurrentlyRevealed(true);
     setParticipants((prev) =>
@@ -206,7 +195,7 @@ function SecretSantaApp() {
       <div className="pointer-events-none fixed bottom-10 left-1/3 h-96 w-96 rounded-full bg-emerald-500/10 blur-[150px]" />
 
       {/* Header */}
-      <FestiveHeader activeParticipant={activeParticipant} onLogout={handleLogout} />
+      <FestiveHeader activeParticipant={activeParticipant} />
 
       <main className="relative z-20 pb-16">
         {/* =====================================================================
@@ -280,7 +269,6 @@ function SecretSantaApp() {
           initialRecipientName={revealedRecipient}
           initialIsRevealed={isCurrentlyRevealed}
           onClose={() => setShowRevealModal(false)}
-          onLogout={handleLogout}
           onRevealSuccess={() => handleRevealSuccess(activeParticipant.id)}
         />
       )}
