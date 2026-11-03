@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
-// In-memory rate limiter for Santa chat: max 25 messages per minute per IP
+// In-memory rate limiter for Santa chat: max 30 messages per minute per IP
 interface ChatRateLimit {
   timestamps: number[];
 }
 const chatRateLimitMap = new Map<string, ChatRateLimit>();
 const CHAT_WINDOW_MS = 60 * 1000;
-const CHAT_MAX_PER_WINDOW = 25;
+const CHAT_MAX_PER_WINDOW = 30;
 
 function isChatRateLimited(ip: string): boolean {
   const now = Date.now();
   const record = chatRateLimitMap.get(ip) || { timestamps: [] };
-  // Filter out timestamps older than window
   record.timestamps = record.timestamps.filter((t) => now - t < CHAT_WINDOW_MS);
 
   if (record.timestamps.length >= CHAT_MAX_PER_WINDOW) {
@@ -25,15 +25,15 @@ function isChatRateLimited(ip: string): boolean {
   return false;
 }
 
-const SANTA_SYSTEM_INSTRUCTION = `You are Santa Claus (بابا نويل), the legendary, jolly, warm, and magical symbol of Christmas, chatting directly with participants of an exclusive Secret Santa holiday party!
+const SANTA_SYSTEM_INSTRUCTION = `You are Santa Claus (بابا نويل), the legendary, jolly, warm, and magical symbol of Christmas, chatting directly with guests of an exclusive Secret Santa holiday party!
 
-YOUR PERSONALITY:
+YOUR PERSONALITY & TONE:
 - Cheerful, witty, playful, heartwarming, and full of festive wonder.
 - Speak naturally with festive expressions (Ho ho ho! / هو هو هو! 🎅), holiday warmth, and light Christmas humor.
 - Use occasional Christmas emojis (🎅, 🎄, 🎁, ❄️, ⭐, 🦌, 🍪) naturally without overusing them.
 - Speak conversationally and directly to the person. Never sound like a generic, robotic customer-support chatbot.
 - BILINGUAL ADAPTATION: Detect the participant's language:
-  * If the user speaks Arabic (العربية), respond in cheerful, warm, festive Arabic with natural holiday charm.
+  * If the user speaks Arabic (العربية), respond in cheerful, warm, festive Arabic with Middle Eastern / Levantine / Jordanian holiday warmth and friendliness.
   * If the user speaks English, respond in warm, joyful festive English.
   * If they mix Arabic and English, match their blend playfully.
 
@@ -41,7 +41,7 @@ WHAT PARTICIPANTS CAN ASK:
 - Casual conversations, holiday greetings, and merry wishes.
 - Stories from the North Pole, Mrs. Claus's baking, the busy toy workshop, elves, Rudolph and the 8 reindeer (Dasher, Dancer, Prancer, Vixen, Comet, Cupid, Donner, Blitzen), hot cocoa, and cookies.
 - Secret Santa rules: Explain how Secret Santa works (everyone draws a secret recipient, buys a thoughtful gift according to budget, keeps the secret until the big reveal!).
-- Gift ideas & inspiration: Suggest creative, thoughtful gift ideas based on any hobbies, interests, or budget the user voluntarily shares.
+- Gift ideas & inspiration: When asked for gift suggestions (e.g. for a specific person or budget in JOD / USD / EUR), provide creative, thoughtful, practical, and fun suggestions matching that budget!
 - Christmas cards, poems, festive jokes, and trivia.
 - If asked something you genuinely don't know, respond with cheerful Santa charm (e.g., "Even with Rudolph's glowing nose lighting the way, that one is a holiday mystery!").
 
@@ -58,72 +58,100 @@ function isArabicText(text: string): boolean {
   return /[\u0600-\u06FF]/.test(text);
 }
 
-function extractInteractionText(data: any): string | null {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
+function categorizeError(status: number, message: string): string {
+  const lowerMsg = (message || "").toLowerCase();
+  if (status === 401 || status === 403 || lowerMsg.includes("api key") || lowerMsg.includes("credential")) {
+    return "Authentication failure";
   }
-  if (Array.isArray(data?.steps)) {
-    const outputStep = data.steps.find((s: any) => s.type === "model_output");
-    if (outputStep && Array.isArray(outputStep.content)) {
-      const textItem = outputStep.content.find(
-        (c: any) => c.type === "text" && typeof c.text === "string"
-      );
-      if (textItem && textItem.text.trim()) {
-        return textItem.text.trim();
-      }
-    }
+  if (status === 404 || lowerMsg.includes("not found") || lowerMsg.includes("no longer available")) {
+    return "Invalid model";
   }
-  return null;
+  if (status === 429 && (lowerMsg.includes("quota") || lowerMsg.includes("resource_exhausted") || lowerMsg.includes("per day"))) {
+    return "Quota exceeded";
+  }
+  if (status === 429) {
+    return "Rate limit";
+  }
+  if (status >= 500 && status <= 504) {
+    return `Server error (${status})`;
+  }
+  return `API error (${status})`;
 }
 
-async function callInteractionsApi(
+// Ordered list of models to try (primary requested model first, followed by high-speed failovers)
+const CANDIDATE_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+];
+
+const MODEL_TIMEOUTS: Record<string, number> = {
+  "gemini-3.8-flash": 3000,
+  "gemini-3.5-flash": 3000,
+  "gemini-3.5-flash-lite": 8000,
+  "gemini-3.1-flash-lite": 8000,
+};
+
+async function callGenerateContent(
   model: string,
   systemInstruction: string,
-  input: string,
+  contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }>,
   apiKey: string,
-  thinkingLevel: "low" | "minimal" = "minimal",
-  timeoutMs = 12000
-): Promise<string | null> {
+  timeoutMs = 6000
+): Promise<{ text: string | null; errorCategory?: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const payload: any = {
-      model,
-      system_instruction: systemInstruction,
-      input,
-    };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    if (thinkingLevel) {
-      payload.generation_config = {
-        thinking_level: thinkingLevel,
-      };
-    }
-
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemInstruction }],
+        },
+        contents,
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 450,
+          thinkingConfig: {
+            thinkingLevel: "MINIMAL",
+          },
+        },
+      }),
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      console.warn(`Interactions API notice (${model}) [${response.status}]:`, errBody.slice(0, 200));
-      return null;
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      const rawMsg = errJson?.error?.message || res.statusText || "";
+      const category = categorizeError(res.status, rawMsg);
+      console.warn(`[Santa AI] ${model} failed -> ${category} (${res.status}): ${rawMsg.slice(0, 100)}`);
+      return { text: null, errorCategory: category };
     }
 
-    const json = await response.json();
-    return extractInteractionText(json);
-  } catch (err) {
+    const data = await res.json();
+    const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (typeof candidateText === "string" && candidateText.trim().length > 0) {
+      return { text: candidateText.trim() };
+    }
+
+    console.warn(`[Santa AI] ${model} returned empty or invalid response format.`);
+    return { text: null, errorCategory: "Invalid response format" };
+  } catch (err: unknown) {
     clearTimeout(timeoutId);
-    console.warn(`Interactions API fetch notice (${model}):`, err instanceof Error ? err.message : err);
-    return null;
+    const isTimeout = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+    const category = isTimeout ? "Timeout" : "Network error";
+    console.warn(`[Santa AI] ${model} call error -> ${category}: ${err instanceof Error ? err.message : String(err)}`);
+    return { text: null, errorCategory: category };
   }
 }
 
@@ -159,36 +187,36 @@ export async function POST(req: NextRequest) {
     }
 
     const rawHistory = Array.isArray(body.history) ? body.history : [];
-    // Sanitize and limit history to last 4 turns
+    // Build structured Gemini contents turns: user -> model -> user -> ...
+    const formattedContents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
+
+    // Include last 4 turns for rich context
     const cleanHistory = rawHistory
       .slice(-4)
-      .filter((item: any) => item && (item.role === "user" || item.role === "santa") && typeof item.content === "string")
-      .map((item: any) => ({
-        role: item.role as "user" | "santa",
-        content: String(item.content).slice(0, 400),
-      }));
+      .filter((item: any) => item && (item.role === "user" || item.role === "santa") && typeof item.content === "string");
 
-    // Build dialogue prompt
-    let formattedPrompt = "";
-    if (cleanHistory.length > 0) {
-      const historyDialogue = cleanHistory
-        .map((h: { role: "user" | "santa"; content: string }) => `${h.role === "user" ? "Participant" : "Santa"}: ${h.content}`)
-        .join("\n");
-      formattedPrompt = `${historyDialogue}\nParticipant: ${rawMessage}\nSanta:`;
-    } else {
-      formattedPrompt = rawMessage;
+    for (const h of cleanHistory) {
+      formattedContents.push({
+        role: h.role === "santa" ? "model" : "user",
+        parts: [{ text: String(h.content).slice(0, 400) }],
+      });
     }
+
+    // Add current user turn
+    formattedContents.push({
+      role: "user",
+      parts: [{ text: rawMessage }],
+    });
 
     const apiKey = process.env.GEMINI_API_KEY;
     const isArabic = isArabicText(rawMessage);
 
-    // Default cheerful fallback if API key is missing or services are unreachable
     const defaultFallback = isArabic
       ? "هو هو هو! 🎅 عاصفة ثلجية مفاجئة في القطب الشمالي تشوش على بلورتي السحرية حالياً! ❄️✨ حاول سؤالي مجدداً بعد لحظات قليلة يا صديقي!"
       : "Ho ho ho! 🎅 A sudden North Pole blizzard is causing a little static in my magical communicator! ❄️✨ Give it another try in just a moment, my friend!";
 
     if (!apiKey) {
-      console.warn("Notice: GEMINI_API_KEY environment variable not set.");
+      console.warn("[Santa AI] Authentication failure: GEMINI_API_KEY environment variable not set.");
       return NextResponse.json({
         success: true,
         reply: defaultFallback,
@@ -196,49 +224,53 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 1. PRIMARY ATTEMPT: Gemini 3.8 Flash (User requirement)
-    let santaReply: string | null = null;
-    let usedModel = "gemini-3.8-flash";
+    // Cascading failover loop: tries candidate models in order
+    let generatedReply: string | null = null;
+    let selectedModel = "";
+    const failureLog: Array<{ model: string; category: string }> = [];
 
-    santaReply = await callInteractionsApi(
-      "gemini-3.8-flash",
-      SANTA_SYSTEM_INSTRUCTION,
-      formattedPrompt,
-      apiKey,
-      "low",
-      10000
-    );
-
-    // 2. AUTOMATIC FAILOVER: Gemini 3.5 Flash (minimal thinking level)
-    if (!santaReply) {
-      usedModel = "gemini-3.5-flash";
-      santaReply = await callInteractionsApi(
-        "gemini-3.5-flash",
+    for (const candidate of CANDIDATE_MODELS) {
+      const timeoutMs = MODEL_TIMEOUTS[candidate] || 6000;
+      const result = await callGenerateContent(
+        candidate,
         SANTA_SYSTEM_INSTRUCTION,
-        formattedPrompt,
+        formattedContents,
         apiKey,
-        "minimal",
-        10000
+        timeoutMs
       );
+
+      if (result.text) {
+        generatedReply = result.text;
+        selectedModel = candidate;
+        break;
+      } else {
+        failureLog.push({ model: candidate, category: result.errorCategory || "Unknown error" });
+      }
     }
 
-    // 3. FINAL RESILIENT FALLBACK: Santa-themed friendly message
-    if (!santaReply) {
-      santaReply = defaultFallback;
-      usedModel = "santa-fallback";
+    if (generatedReply) {
+      return NextResponse.json({
+        success: true,
+        reply: generatedReply,
+        model: selectedModel,
+      });
     }
+
+    // If all models failed, log the full categorized failure summary
+    console.error("[Santa AI] All model attempts failed:", JSON.stringify(failureLog));
 
     return NextResponse.json({
       success: true,
-      reply: santaReply,
-      model: usedModel,
+      reply: defaultFallback,
+      model: "all-fallback",
+      errorDetails: failureLog.map((f) => `${f.model}: ${f.category}`).join(", "),
     });
   } catch (err) {
-    console.error("Santa Chat API error:", err);
+    console.error("[Santa AI] Unexpected server error in /api/santa/chat:", err);
     return NextResponse.json(
       {
         success: true,
-        reply: "Ho ho ho! 🎅 The elves are tinkering with my communicator right now! Please try again in a few seconds! 🎄✨",
+        reply: "Ho ho ho! 🎅 The toy workshop is bustling with activity right now! Give me just a second and try asking again! 🎄✨",
         model: "error-fallback",
       },
       { status: 200 }

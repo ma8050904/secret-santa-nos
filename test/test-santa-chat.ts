@@ -76,12 +76,43 @@ async function runTests() {
   if (!data4.success || !data4.reply) throw new Error("Gift suggestion failed");
   console.log("  ✅ PASS: Gift inspiration functioning.\n");
 
-  // Test 5: Input Validation
-  console.log("--- 5. Testing Input Validation ---");
-  const req5 = createRequest({ message: "" });
+  // Test 5: Exact Arabic Gift Prompt
+  console.log("--- 5. Testing Exact User Prompt (Qais gift for 7+ JOD) ---");
+  const req5 = createRequest({
+    message: "اسمع شو تقترح علي أجيب هدية لقيس وتكون على الأقل ٧ دنانير؟",
+  });
   const res5 = await POST(req5);
   const data5 = await res5.json();
-  if (res5.status !== 400) throw new Error("Empty message should return 400");
+  console.log(`  Model Used: ${data5.model}`);
+  console.log(`  Santa: "${data5.reply.slice(0, 200)}..."`);
+  if (!data5.success || !data5.reply) throw new Error("Exact user prompt failed");
+  if (data5.reply.includes("عاصفة ثلجية")) {
+    throw new Error("Returned fallback instead of real response!");
+  }
+  console.log("  ✅ PASS: Exact Arabic gift prompt returned real AI suggestions.\n");
+
+  // Test 6: Multi-Turn Conversation
+  console.log("--- 6. Testing Multi-Turn Context ---");
+  const req6 = createRequest({
+    message: "شو رأيك بالخيار الأول؟",
+    history: [
+      { role: "user", content: "اسمع شو تقترح علي أجيب هدية لقيس وتكون على الأقل ٧ دنانير؟" },
+      { role: "santa", content: data5.reply },
+    ],
+  });
+  const res6 = await POST(req6);
+  const data6 = await res6.json();
+  console.log(`  Model Used: ${data6.model}`);
+  console.log(`  Santa: "${data6.reply.slice(0, 150)}..."`);
+  if (!data6.success || !data6.reply) throw new Error("Multi-turn context failed");
+  console.log("  ✅ PASS: Multi-turn conversation functioning.\n");
+
+  // Test 7: Input Validation
+  console.log("--- 7. Testing Input Validation ---");
+  const req7 = createRequest({ message: "" });
+  const res7 = await POST(req7);
+  const data7 = await res7.json();
+  if (res7.status !== 400) throw new Error("Empty message should return 400");
   console.log("  ✅ PASS: Input validation properly rejects empty messages.\n");
 
   console.log("=========================================================");
