@@ -9,8 +9,8 @@ import {
   MANDATORY_RECIPROCAL_B,
   FORBIDDEN_EXCLUSION_A,
   FORBIDDEN_EXCLUSION_B,
-  TARGET_RECIPIENT,
-  TARGET_ALLOWED_GIVERS,
+  SUBGROUP_20_IDS,
+  SUBGROUP_20_ID_SET,
 } from "../src/lib/derangement";
 import {
   hashPin,
@@ -96,7 +96,7 @@ async function runTests() {
   const testFile = process.env.STORAGE_FILE_PATH || "/tmp/test-secret-santa.json";
   if (fs.existsSync(testFile)) fs.rmSync(testFile, { force: true });
   const testDir = path.dirname(testFile);
-  for (const prefix of ["v5_", "v6_"]) {
+  for (const prefix of ["v5_", "v6_", "v7_"]) {
     for (const sub of ["participants", "revealed", "registered"]) {
       const d = path.join(testDir, `${prefix}${sub}`);
       if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
@@ -127,7 +127,7 @@ async function runTests() {
   const state = await getEventState();
   assert(state.participants.length === 48, "Storage contains all 48 participants");
   assert(state.status === "active", "Event draw remains in active status");
-  assert(state.version === 6, "Event round version is 6");
+  assert(state.version === 7, "Event round version is 7");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
@@ -166,16 +166,24 @@ async function runTests() {
     `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_A} and ${FORBIDDEN_EXCLUSION_B} are NOT assigned to each other`
   );
 
-  // 5. Mandatory Constraint 3: Who Receives Mohammad Shourati
-  const shouratiGiver = Array.from(decryptedMap.entries()).find(([_, rec]) => rec === TARGET_RECIPIENT)?.[0];
-  assert(
-    typeof shouratiGiver === "string" && (TARGET_ALLOWED_GIVERS as readonly string[]).includes(shouratiGiver),
-    `Mandatory Constraint 3 verified: Mohammad Shourati's giver is one of the 11 allowed participants (${shouratiGiver})`
-  );
-  const shouratiRecipientCount = Array.from(decryptedMap.values()).filter((r) => r === TARGET_RECIPIENT).length;
-  assert(shouratiRecipientCount === 1, "Exactly one participant receives Mohammad Shourati");
-  const shouratiOwnRecipient = decryptedMap.get(TARGET_RECIPIENT);
-  assert(shouratiOwnRecipient !== TARGET_RECIPIENT, "Mohammad Shourati is not self-assigned");
+  // 5. Mandatory Subgroup 20 Isolation
+  let sub20CrossEdges = 0;
+  for (const [giver, rec] of decryptedMap.entries()) {
+    const giverP = state.participants.find((p) => p.name === giver)!;
+    const recP = state.participants.find((p) => p.name === rec)!;
+    const giverInSub20 = SUBGROUP_20_ID_SET.has(giverP.id);
+    const recInSub20 = SUBGROUP_20_ID_SET.has(recP.id);
+    if ((giverInSub20 && !recInSub20) || (!giverInSub20 && recInSub20)) {
+      sub20CrossEdges++;
+    }
+  }
+  assert(sub20CrossEdges === 0, "Subgroup 20 is completely isolated (0 edges cross between 20-subgroup and remaining 28)");
+
+  // 6. Mohammad Shourati is in Subgroup 20 and not self-assigned
+  const shouratiRecipient = decryptedMap.get("Mohammad Shourati");
+  assert(shouratiRecipient !== "Mohammad Shourati", "Mohammad Shourati is not self-assigned");
+  const shouratiP = state.participants.find((p) => p.name === shouratiRecipient)!;
+  assert(SUBGROUP_20_ID_SET.has(shouratiP.id), "Mohammad Shourati receives from and gives to Subgroup 20");
 
   // =========================================================================
   // SUITE C: CRYPTOGRAPHIC PIN HASHING & SALT SECURITY
@@ -256,28 +264,28 @@ async function runTests() {
   // SUITE G: SESSION SECURITY & ROUND INVALIDATION
   // =========================================================================
   console.log("\n--- G. Session Security & Round Invalidation ---");
-  const round6FreshSecret = "SantaMagic2024_Round6_PinResetTokenKey_v6_fresh";
-  const preResetRound6Secret = "SantaMagic2024_Round6_SecureTokenKey_v6";
+  const round7Secret = "SantaMagic2024_Round7_SubgroupPartition_v7";
+  const round6Secret = "SantaMagic2024_Round6_PinResetTokenKey_v6_fresh";
   const round5Secret = "SantaMagic2024_Round5_SecureTokenKey_v5";
 
-  // Token created with fresh round 6 secret validates
-  const validToken = createSessionToken("p1", round6FreshSecret);
-  const verified = verifySessionToken(validToken, round6FreshSecret);
-  assert(verified?.participantId === "p1", "Valid Round 6 session token verifies participant ID");
+  // Token created with Round 7 secret validates
+  const validToken = createSessionToken("p1", round7Secret);
+  const verified = verifySessionToken(validToken, round7Secret);
+  assert(verified?.participantId === "p1", "Valid Round 7 session token verifies participant ID");
 
-  // Token created with pre-reset round 6 secret is REJECTED
-  const preResetToken = createSessionToken("p1", preResetRound6Secret);
-  const preResetVerified = verifySessionToken(preResetToken, round6FreshSecret);
-  assert(preResetVerified === null, "Pre-reset Round 6 session token is rejected after PIN reset");
+  // Token created with Round 6 secret is REJECTED
+  const oldRound6Token = createSessionToken("p1", round6Secret);
+  const oldRound6Verified = verifySessionToken(oldRound6Token, round7Secret);
+  assert(oldRound6Verified === null, "Previous Round 6 session token is rejected in Round 7");
 
   // Token created with previous round secret (Round 5) is REJECTED
   const oldToken = createSessionToken("p1", round5Secret);
-  const oldVerified = verifySessionToken(oldToken, round6FreshSecret);
-  assert(oldVerified === null, "Previous Round 5 session token is rejected in Round 6");
+  const oldVerified = verifySessionToken(oldToken, round7Secret);
+  assert(oldVerified === null, "Previous Round 5 session token is rejected in Round 7");
 
   // Tampered token is rejected
   const tamperedToken = validToken.substring(0, validToken.length - 4) + "XXXX";
-  assert(verifySessionToken(tamperedToken, round6FreshSecret) === null, "Tampered session token is rejected");
+  assert(verifySessionToken(tamperedToken, round7Secret) === null, "Tampered session token is rejected");
 
   // =========================================================================
   // SUITE H: CONCURRENCY LOAD TEST (Simulating 48 concurrent participants)
@@ -377,7 +385,7 @@ async function runTests() {
   function createMockRequest(url: string, body: any, sessionParticipantId?: string) {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (sessionParticipantId) {
-      const token = createSessionToken(sessionParticipantId, round6FreshSecret);
+      const token = createSessionToken(sessionParticipantId, round7Secret);
       headers["cookie"] = `santa_participant_session=${token}`;
     }
     return new NextRequest(url, {

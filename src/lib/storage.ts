@@ -70,7 +70,7 @@ function getStorageFilePath(): string {
 
 function getLocalParticipantDir(): string {
   const base = getStorageFilePath();
-  const dir = path.join(path.dirname(base), "v6_participants");
+  const dir = path.join(path.dirname(base), "v7_participants");
   if (!fs.existsSync(dir)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -121,7 +121,7 @@ function createInitialState(): EventState {
   });
 
   return {
-    version: 6,
+    version: 7,
     status: "uninitialized",
     createdAt: new Date().toISOString(),
     generatedAt: null,
@@ -143,16 +143,16 @@ async function syncMarkers(force = false): Promise<void> {
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       const [revealedList, registeredList] = await Promise.all([
-        list({ prefix: "v6/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
-        list({ prefix: "v6/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v7/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v7/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
       ]);
 
       for (const b of revealedList.blobs) {
-        const id = b.pathname.replace("v6/revealed/", "");
+        const id = b.pathname.replace("v7/revealed/", "");
         if (id) revealedParticipantIds.add(id);
       }
       for (const b of registeredList.blobs) {
-        const id = b.pathname.replace("v6/registered/", "");
+        const id = b.pathname.replace("v7/registered/", "");
         if (id) registeredParticipantIds.add(id);
       }
       lastMarkersSyncTimestamp = now;
@@ -165,8 +165,8 @@ async function syncMarkers(force = false): Promise<void> {
   // 2. Local disk sync
   try {
     const localDir = path.dirname(getStorageFilePath());
-    const revealedDir = path.join(localDir, "v6_revealed");
-    const registeredDir = path.join(localDir, "v6_registered");
+    const revealedDir = path.join(localDir, "v7_revealed");
+    const registeredDir = path.join(localDir, "v7_registered");
 
     if (fs.existsSync(revealedDir)) {
       const files = fs.readdirSync(revealedDir);
@@ -346,7 +346,7 @@ export async function getParticipantRuntimeState(
   // 1. Check dedicated Vercel Blob for this participant (if not in isolated test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      const url = `${KNOWN_BLOB_BASE}/v6/participants/${participantId}.json`;
+      const url = `${KNOWN_BLOB_BASE}/v7/participants/${participantId}.json`;
       const res: any = await get(url, {
         access: "private",
         token: process.env.BLOB_READ_WRITE_TOKEN,
@@ -434,7 +434,7 @@ export async function saveParticipantRuntimeState(
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       const promises: Promise<any>[] = [
-        put(`v6/participants/${state.participantId}.json`, serialized, {
+        put(`v7/participants/${state.participantId}.json`, serialized, {
           access: "private",
           addRandomSuffix: false,
           allowOverwrite: true,
@@ -445,7 +445,7 @@ export async function saveParticipantRuntimeState(
       // Lightweight markers for lightning-fast directory queries
       if (state.pinHash) {
         promises.push(
-          put(`v6/registered/${state.participantId}`, "1", {
+          put(`v7/registered/${state.participantId}`, "1", {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -455,7 +455,7 @@ export async function saveParticipantRuntimeState(
       }
       if (state.isRevealed) {
         promises.push(
-          put(`v6/revealed/${state.participantId}`, "1", {
+          put(`v7/revealed/${state.participantId}`, "1", {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -480,12 +480,12 @@ export async function saveParticipantRuntimeState(
 
     const localBaseDir = path.dirname(getStorageFilePath());
     if (state.pinHash) {
-      const regDir = path.join(localBaseDir, "v6_registered");
+      const regDir = path.join(localBaseDir, "v7_registered");
       if (!fs.existsSync(regDir)) fs.mkdirSync(regDir, { recursive: true });
       fs.writeFileSync(path.join(regDir, state.participantId), "");
     }
     if (state.isRevealed) {
-      const revDir = path.join(localBaseDir, "v6_revealed");
+      const revDir = path.join(localBaseDir, "v7_revealed");
       if (!fs.existsSync(revDir)) fs.mkdirSync(revDir, { recursive: true });
       fs.writeFileSync(path.join(revDir, state.participantId), "");
     }
@@ -538,7 +538,7 @@ export async function generateAssignments(force = false): Promise<{
   }
 
   state.status = "active";
-  state.version = 6;
+  state.version = 7;
   state.generatedAt = new Date().toISOString();
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();

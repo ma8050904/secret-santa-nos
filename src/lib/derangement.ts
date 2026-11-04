@@ -18,7 +18,33 @@ export const MANDATORY_RECIPROCAL_B = "George Karkar";
 export const FORBIDDEN_EXCLUSION_A = "Zeina Darawi";
 export const FORBIDDEN_EXCLUSION_B = "Hamza Darawi";
 
-// Constraint 3 (Corrected): Who Receives Mohammad Shourati
+// Canonical 20-Person Subgroup
+export const SUBGROUP_20_IDS = [
+  "p34", // Qais Al-Hadeed
+  "p28", // Mohammad Shourati
+  "p27", // Mohammad Darras
+  "p8",  // Hamza Darawi
+  "p48", // Zeina Darawi
+  "p13", // Joewelle Ehab
+  "p42", // Yara Barjawi
+  "p20", // Leya Al-Khatib
+  "p29", // Nardeen Abdallah
+  "p36", // Sanad Al-Hunaiti
+  "p2",  // George Karkar
+  "p3",  // George Shammas
+  "p4",  // Ghazal Baqleh
+  "p15", // Jude Fanous
+  "p22", // Malak Hindaileh
+  "p37", // Sarah Rabadi
+  "p41", // Wasan Abu Hamdeh
+  "p26", // Michael Shamma
+  "p40", // Toleen Awwad
+  "p14", // Joseph Dababneh
+] as const;
+
+export const SUBGROUP_20_ID_SET = new Set<string>(SUBGROUP_20_IDS);
+
+// Legacy backward-compatibility constants
 export const TARGET_RECIPIENT = "Mohammad Shourati";
 export const TARGET_ALLOWED_GIVERS = [
   "Michael Shamma",
@@ -82,10 +108,11 @@ export function validateDerangement(
 }
 
 /**
- * Validates all constraints specified in Phase 3:
- * 1. Derangement properties (all 48 assigned, unique, non-self).
- * 2. Mandatory reciprocal pair: Ghazal Baqleh <-> George Karkar.
- * 3. Mandatory exclusion: Zeina Darawi cannot give to Hamza Darawi, and Hamza cannot give to Zeina.
+ * Validates all constrained Secret Santa draw requirements:
+ * 1. Base derangement properties (unique givers, unique recipients, zero self-assignments).
+ * 2. 20-Person Subgroup Isolation (zero edges entering or leaving the 20-person subgroup).
+ * 3. Mandatory reciprocal pair: Ghazal Baqleh <-> George Karkar.
+ * 4. Mandatory mutual exclusion: Zeina Darawi cannot give to or receive from Hamza Darawi.
  */
 export function validateConstrainedSecretSantaDraw(
   participants: readonly ParticipantItem[],
@@ -102,7 +129,28 @@ export function validateConstrainedSecretSantaDraw(
     map.set(a.giverName, a.recipientName);
   }
 
-  // 1. Mandatory reciprocal assignment
+  // 1. Check Subgroup 20 isolation if full 48-roster is present
+  if (participants.length === 48) {
+    for (const a of assignments) {
+      const giverInSub20 = SUBGROUP_20_ID_SET.has(a.giverId);
+      const recipientInSub20 = SUBGROUP_20_ID_SET.has(a.recipientId);
+
+      if (giverInSub20 && !recipientInSub20) {
+        return {
+          valid: false,
+          reason: `Subgroup 20 isolation violation: ${a.giverName} (in Subgroup 20) gave to ${a.recipientName} (outside Subgroup 20)`,
+        };
+      }
+      if (!giverInSub20 && recipientInSub20) {
+        return {
+          valid: false,
+          reason: `Subgroup 20 isolation violation: ${a.giverName} (outside Subgroup 20) gave to ${a.recipientName} (inside Subgroup 20)`,
+        };
+      }
+    }
+  }
+
+  // 2. Mandatory reciprocal assignment
   if (map.get(MANDATORY_RECIPROCAL_A) !== MANDATORY_RECIPROCAL_B) {
     return {
       valid: false,
@@ -116,7 +164,7 @@ export function validateConstrainedSecretSantaDraw(
     };
   }
 
-  // 2. Mandatory exclusion constraint
+  // 3. Mandatory exclusion constraint
   if (map.get(FORBIDDEN_EXCLUSION_A) === FORBIDDEN_EXCLUSION_B) {
     return {
       valid: false,
@@ -127,23 +175,6 @@ export function validateConstrainedSecretSantaDraw(
     return {
       valid: false,
       reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_B} cannot be assigned to ${FORBIDDEN_EXCLUSION_A}`,
-    };
-  }
-
-  // 3. Mandatory Constraint 3: Who Receives Mohammad Shourati
-  // Mohammad Shourati must be assigned as the recipient to exactly ONE randomly selected participant from TARGET_ALLOWED_GIVERS
-  const shouratiGivers = assignments.filter((a) => a.recipientName === TARGET_RECIPIENT);
-  if (shouratiGivers.length !== 1) {
-    return {
-      valid: false,
-      reason: `Constraint 3 violation: ${TARGET_RECIPIENT} must have exactly one giver, found ${shouratiGivers.length}`,
-    };
-  }
-  const giverOfShourati = shouratiGivers[0].giverName;
-  if (!TARGET_ALLOWED_GIVERS.includes(giverOfShourati as any)) {
-    return {
-      valid: false,
-      reason: `Constraint 3 violation: Giver of ${TARGET_RECIPIENT} must be one of the 11 allowed participants, but got "${giverOfShourati}"`,
     };
   }
 
@@ -217,15 +248,7 @@ export function generateSecretSantaDerangement(
   return assignments;
 }
 
-/**
- * Generates a constrained Secret Santa draw satisfying all Phase 3 requirements:
- * 1. Fixed reciprocal: Ghazal Baqleh <-> George Karkar
- * 2. Forbidden exclusions: Zeina Darawi <-> Hamza Darawi
- * 3. Uniform cryptographic derangement on remaining participants
- */
-export function generateConstrainedSecretSantaDraw(
-  participants: readonly ParticipantItem[]
-): AssignmentPair[] {
+function generateSubgroup20Pairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
   const ghazal = participants.find((p) => p.name === MANDATORY_RECIPROCAL_A);
   const george = participants.find((p) => p.name === MANDATORY_RECIPROCAL_B);
 
@@ -272,14 +295,6 @@ export function generateConstrainedSecretSantaDraw(
         break;
       }
 
-      // Check constraint 3: If recipient is Mohammad Shourati, giver MUST be in TARGET_ALLOWED_GIVERS
-      if (recipient.name === TARGET_RECIPIENT) {
-        if (!TARGET_ALLOWED_GIVERS.includes(giver.name as any)) {
-          hasViolation = true;
-          break;
-        }
-      }
-
       pairs.push({
         giverId: giver.id,
         giverName: giver.name,
@@ -306,12 +321,78 @@ export function generateConstrainedSecretSantaDraw(
       recipientName: ghazal.name,
     });
 
-    // Validate the candidate draw against all constraints
-    const validation = validateConstrainedSecretSantaDraw(participants, pairs);
-    if (validation.valid) {
-      return pairs;
-    }
+    return pairs;
   }
 
-  throw new Error(`Failed to generate constrained Secret Santa draw after ${maxAttempts} attempts.`);
+  throw new Error(`Failed to generate Subgroup 20 draw after ${maxAttempts} attempts.`);
+}
+
+function generateDerangementCyclePairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
+  const n = participants.length;
+  if (n < 2) {
+    throw new Error("Derangement requires at least 2 participants.");
+  }
+
+  const list = [...participants];
+  for (let i = n - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i);
+    const temp = list[i];
+    list[i] = list[j];
+    list[j] = temp;
+  }
+
+  const pairs: AssignmentPair[] = [];
+  for (let i = 0; i < n; i++) {
+    const giver = list[i];
+    const recipient = list[(i + 1) % n];
+    pairs.push({
+      giverId: giver.id,
+      giverName: giver.name,
+      recipientId: recipient.id,
+      recipientName: recipient.name,
+    });
+  }
+
+  return pairs;
+}
+
+/**
+ * Generates a constrained Secret Santa draw satisfying all requirements:
+ * If full 48-roster is given:
+ * - Subgroup 1 (20 participants): closed internal draw, Ghazal <-> George reciprocal, Zeina <-> Hamza exclusion.
+ * - Subgroup 2 (28 participants): closed internal derangement cycle.
+ */
+export function generateConstrainedSecretSantaDraw(
+  participants: readonly ParticipantItem[]
+): AssignmentPair[] {
+  if (participants.length === 48) {
+    const sub20 = participants.filter((p) => SUBGROUP_20_ID_SET.has(p.id));
+    const rem28 = participants.filter((p) => !SUBGROUP_20_ID_SET.has(p.id));
+
+    if (sub20.length !== 20 || rem28.length !== 28) {
+      throw new Error(
+        `Roster partition mismatch: expected 20 in sub20 (got ${sub20.length}) and 28 in rem28 (got ${rem28.length})`
+      );
+    }
+
+    let attempts = 0;
+    const maxAttempts = 10000;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      const draw20 = generateSubgroup20Pairs(sub20);
+      const draw28 = generateDerangementCyclePairs(rem28);
+      const combined = [...draw20, ...draw28];
+
+      const validation = validateConstrainedSecretSantaDraw(participants, combined);
+      if (validation.valid) {
+        return combined;
+      }
+    }
+
+    throw new Error(`Failed to generate partitioned Secret Santa draw after ${maxAttempts} attempts.`);
+  }
+
+  // If already filtered to sub20
+  return generateSubgroup20Pairs(participants);
 }
