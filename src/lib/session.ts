@@ -2,9 +2,13 @@ import { NextRequest } from "next/server";
 import crypto from "crypto";
 import { createSessionToken, verifySessionToken } from "./crypto";
 
-const SESSION_COOKIE_NAME = "santa_participant_session";
-const DEVICE_COOKIE_NAME = "santa_device_id";
-const SESSION_SECRET = process.env.SESSION_SECRET || "SantaMagic2024_Round7_SubgroupPartition_v7";
+const SESSION_COOKIE_NAME = "santa_session_v7_clean";
+const LEGACY_SESSION_COOKIE = "santa_participant_session";
+const DEVICE_COOKIE_NAME = "santa_device_v7_clean";
+const LEGACY_DEVICE_COOKIE = "santa_device_id";
+
+const SESSION_SECRET =
+  process.env.SESSION_SECRET || "SantaMagic2024_Round7_FinalClean_v7_Production_Strict";
 
 export function isValidUUID(id: string | null | undefined): boolean {
   if (!id || typeof id !== "string") return false;
@@ -19,7 +23,10 @@ export function generateServerDeviceId(): string {
   return crypto.randomBytes(16).toString("hex");
 }
 
-export function setSessionCookie(response: { cookies: { set: (name: string, value: string, options: any) => void } }, participantId: string) {
+export function setSessionCookie(
+  response: { cookies: { set: (name: string, value: string, options: any) => void } },
+  participantId: string
+) {
   const token = createSessionToken(participantId, SESSION_SECRET);
   response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
@@ -28,10 +35,21 @@ export function setSessionCookie(response: { cookies: { set: (name: string, valu
     path: "/",
     maxAge: 60 * 60 * 24 * 7, // 7 days
   });
+  // Clear legacy cookie if present
+  response.cookies.set(LEGACY_SESSION_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
   return token;
 }
 
-export function setDeviceCookie(response: { cookies: { set: (name: string, value: string, options: any) => void } }, deviceId: string) {
+export function setDeviceCookie(
+  response: { cookies: { set: (name: string, value: string, options: any) => void } },
+  deviceId: string
+) {
   response.cookies.set(DEVICE_COOKIE_NAME, deviceId, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -39,10 +57,8 @@ export function setDeviceCookie(response: { cookies: { set: (name: string, value
     path: "/",
     maxAge: 60 * 60 * 24 * 365, // 1 year
   });
-}
-
-export function clearSessionCookie(response: { cookies: { set: (name: string, value: string, options: any) => void } }) {
-  response.cookies.set(SESSION_COOKIE_NAME, "", {
+  // Clear legacy device cookie
+  response.cookies.set(LEGACY_DEVICE_COOKIE, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -51,10 +67,28 @@ export function clearSessionCookie(response: { cookies: { set: (name: string, va
   });
 }
 
+export function clearSessionCookie(response: {
+  cookies: { set: (name: string, value: string, options: any) => void };
+}) {
+  for (const name of [
+    SESSION_COOKIE_NAME,
+    LEGACY_SESSION_COOKIE,
+    DEVICE_COOKIE_NAME,
+    LEGACY_DEVICE_COOKIE,
+  ]) {
+    response.cookies.set(name, "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+  }
+}
+
 export function getSessionFromRequest(req: NextRequest): { participantId: string } | null {
   const cookie = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!cookie) {
-    // Also check header Authorization: Bearer <token>
     const authHeader = req.headers.get("authorization");
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);

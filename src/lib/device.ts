@@ -1,6 +1,7 @@
 "use client";
 
-const DEVICE_STORAGE_KEY = "santa_device_id";
+const DEVICE_STORAGE_KEY = "santa_device_v7_clean_id";
+const LEGACY_STORAGE_KEY = "santa_device_id";
 
 /**
  * Validates whether a string matches a standard UUID v4 format.
@@ -47,6 +48,13 @@ export function generateClientDeviceId(): string {
 export function getOrCreateDeviceId(): string {
   if (typeof window === "undefined") {
     return generateClientDeviceId();
+  }
+
+  // Clear legacy storage key from test sessions
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // ignore
   }
 
   try {

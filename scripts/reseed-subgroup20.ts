@@ -34,7 +34,7 @@ const KNOWN_BLOB_BASE = "https://ygkog8lebahiid0k.private.blob.vercel-storage.co
 const KNOWN_BLOB_URL = `${KNOWN_BLOB_BASE}/secret-santa-event.json`;
 
 function generateFreshSubgroup20Pairs(
-  subgroup20Participants: typeof PARTICIPANTS,
+  subgroup20Participants: readonly any[],
   previousP28RecipientName?: string
 ): AssignmentPair[] {
   const ghazal = subgroup20Participants.find((p) => p.name === MANDATORY_RECIPROCAL_A);

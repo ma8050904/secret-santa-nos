@@ -267,7 +267,7 @@ async function runTests() {
   // SUITE G: SESSION SECURITY & ROUND INVALIDATION
   // =========================================================================
   console.log("\n--- G. Session Security & Round Invalidation ---");
-  const round7Secret = "SantaMagic2024_Round7_SubgroupPartition_v7";
+  const round7Secret = "SantaMagic2024_Round7_FinalClean_v7_Production_Strict";
   const round6Secret = "SantaMagic2024_Round6_PinResetTokenKey_v6_fresh";
   const round5Secret = "SantaMagic2024_Round5_SecureTokenKey_v5";
 
@@ -389,7 +389,7 @@ async function runTests() {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (sessionParticipantId) {
       const token = createSessionToken(sessionParticipantId, round7Secret);
-      headers["cookie"] = `santa_participant_session=${token}`;
+      headers["cookie"] = `santa_session_v7_clean=${token}`;
     }
     if (deviceId) {
       headers["x-device-id"] = deviceId;
