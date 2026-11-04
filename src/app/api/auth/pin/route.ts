@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateOrRegisterPin } from "@/lib/storage";
+import { authenticateOrRegisterPin, getDeviceBinding, bindDeviceToParticipant } from "@/lib/storage";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
-import { setSessionCookie, getSessionFromRequest } from "@/lib/session";
+import { setSessionCookie, setDeviceCookie, getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "PIN is required" }, { status: 400 });
     }
 
+    // Extract device identifier from request headers or cookie
+    const deviceId = getDeviceIdFromRequest(req);
+
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `${ip}:${participantId}`;
     const rateCheck = checkRateLimit(rateLimitKey);
@@ -37,7 +40,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Prevent switching participant identity within an existing authenticated session (Session Lock)
+    // 1. Authoritative Device-Level Binding Check
+    // Prevent a device registered to participant A from attempting to authenticate or access participant B
+    const existingDeviceBinding = await getDeviceBinding(deviceId);
+    if (existingDeviceBinding && existingDeviceBinding.participantId !== participantId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "This device is registered to another participant account. Accessing multiple accounts from the same device is not permitted.",
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Prevent switching participant identity within an existing authenticated session (Session Lock)
     const existingSession = getSessionFromRequest(req);
     if (existingSession && existingSession.participantId !== participantId) {
       return NextResponse.json(
@@ -62,6 +78,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Bind this device to the authenticated participant authoritatively
+    await bindDeviceToParticipant(deviceId, participantId, result.participant?.name || "");
+
     // Successful authentication / registration: reset rate limiter
     resetRateLimit(rateLimitKey);
 
@@ -70,10 +89,12 @@ export async function POST(req: NextRequest) {
       isNewRegistration: result.isNewRegistration,
       participant: result.participant,
       recipientName: result.recipientName,
+      deviceId,
     });
 
-    // Establish secure session cookie
+    // Establish secure session cookie & persistent device cookie
     setSessionCookie(response, participantId);
+    setDeviceCookie(response, deviceId);
 
     return response;
   } catch (err: unknown) {

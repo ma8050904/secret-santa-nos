@@ -9,6 +9,7 @@ import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
 import { SantaChatModal } from "@/components/SantaChatModal";
 import { PARTICIPANTS } from "@/lib/constants";
+import { getDeviceHeaders } from "@/lib/device";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
 const DEFAULT_PARTICIPANTS: ParticipantItem[] = PARTICIPANTS.map((p) => ({
@@ -122,10 +123,31 @@ function SecretSantaApp() {
     }
   }, []);
 
+  // Check existing device binding
+  const checkDeviceStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/device-status", {
+        headers: getDeviceHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok && data.bound && data.participantId && data.participantName) {
+        const boundParticipant: ParticipantItem = {
+          id: data.participantId,
+          name: data.participantName,
+          isRevealed: false,
+        };
+        setActiveParticipant((prev) => prev || boundParticipant);
+      }
+    } catch {
+      // Non-blocking
+    }
+  }, []);
+
   useEffect(() => {
     loadParticipants(true);
     checkSession();
-  }, [loadParticipants, checkSession]);
+    checkDeviceStatus();
+  }, [loadParticipants, checkSession, checkDeviceStatus]);
 
   const scrollToParticipants = () => {
     const el = document.getElementById("participants-section");
@@ -134,10 +156,16 @@ function SecretSantaApp() {
     }
   };
 
-  // Participant card clicked (Session-Locked to active participant once authenticated)
+  // Participant card clicked (Session-Locked & Device-Locked to active participant once authenticated)
   const handleSelectParticipant = useCallback(
     (p: ParticipantItem) => {
       if (activeParticipant) {
+        if (activeParticipant.id !== p.id) {
+          setError(
+            `This device is bound to ${activeParticipant.name}. Accessing multiple accounts from the same device is not permitted.`
+          );
+          return;
+        }
         if (activePin) {
           setShowRevealModal(true);
         } else {

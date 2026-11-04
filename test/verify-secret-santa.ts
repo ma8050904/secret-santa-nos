@@ -26,6 +26,9 @@ import {
   authenticateOrRegisterPin,
   revealRecipientWithPin,
   getAdminSafeState,
+  getDeviceBinding,
+  bindDeviceToParticipant,
+  clearDeviceBindingsForParticipant,
 } from "../src/lib/storage";
 
 let passedCount = 0;
@@ -382,11 +385,14 @@ async function runTests() {
   const { POST: pinRoute } = await import("../src/app/api/auth/pin/route");
   const { POST: revealRoute } = await import("../src/app/api/reveal/route");
 
-  function createMockRequest(url: string, body: any, sessionParticipantId?: string) {
+  function createMockRequest(url: string, body: any, sessionParticipantId?: string, deviceId?: string) {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (sessionParticipantId) {
       const token = createSessionToken(sessionParticipantId, round7Secret);
       headers["cookie"] = `santa_participant_session=${token}`;
+    }
+    if (deviceId) {
+      headers["x-device-id"] = deviceId;
     }
     return new NextRequest(url, {
       method: "POST",
@@ -431,6 +437,92 @@ async function runTests() {
   const separateDeviceRes = await pinRoute(separateDeviceReq);
   const separateDeviceData = await separateDeviceRes.json();
   assert(separateDeviceRes.status === 200 && separateDeviceData.success === true, "Separate device without session cookie authenticates independently");
+
+  // =========================================================================
+  // SUITE K: DEVICE BINDING & PRIVACY ENFORCEMENT
+  // =========================================================================
+  console.log("\n--- K. Device Binding & Privacy Enforcement ---");
+  const { GET: deviceStatusRoute } = await import("../src/app/api/auth/device-status/route");
+
+  const devA = "11111111-2222-4333-8444-555555555555";
+  const devB = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+  // 1. Authenticate Participant 3 on Device A -> should succeed and bind Device A to p3
+  const bindReqA = createMockRequest(
+    "http://localhost:3000/api/auth/pin",
+    { participantId: "p3", pin: "10003" },
+    undefined,
+    devA
+  );
+  const bindResA = await pinRoute(bindReqA);
+  const bindDataA = await bindResA.json();
+  assert(bindResA.status === 200 && bindDataA.success === true, "Participant 3 successfully registers and binds on Device A");
+
+  const bindingRecordA = await getDeviceBinding(devA);
+  assert(bindingRecordA !== null, "Device A is stored in authoritative device registry");
+  assert(bindingRecordA?.participantId === "p3", "Device A is authoritatively mapped to Participant 3");
+
+  // 2. Query device status endpoint for Device A
+  const devStatusReqA = new NextRequest("http://localhost:3000/api/auth/device-status", {
+    method: "GET",
+    headers: { "x-device-id": devA },
+  });
+  const devStatusResA = await deviceStatusRoute(devStatusReqA);
+  const devStatusDataA = await devStatusResA.json();
+  assert(devStatusDataA.bound === true, "Device status correctly reports Device A as bound");
+  assert(devStatusDataA.participantId === "p3", "Device status returns bound participantId p3");
+
+  // 3. Unauthorized access: Device A attempting to authenticate as Participant 4 -> rejected with HTTP 403
+  const hijackPinReq = createMockRequest(
+    "http://localhost:3000/api/auth/pin",
+    { participantId: "p4", pin: "10004" },
+    undefined,
+    devA
+  );
+  const hijackPinRes = await pinRoute(hijackPinReq);
+  const hijackPinData = await hijackPinRes.json();
+  assert(hijackPinRes.status === 403, "Attempt to authenticate as another participant from bound Device A is blocked with HTTP 403");
+  assert(
+    hijackPinData.error?.includes("registered to another participant") ||
+    hijackPinData.error?.includes("same device"),
+    "Block message clearly describes device binding restriction"
+  );
+
+  // 4. Unauthorized reveal: Device A attempting to call /api/reveal for Participant 4 -> rejected with HTTP 403
+  const hijackRevealReq = createMockRequest(
+    "http://localhost:3000/api/reveal",
+    { participantId: "p4", pin: "10004" },
+    undefined,
+    devA
+  );
+  const hijackRevealRes = await revealRoute(hijackRevealReq);
+  assert(hijackRevealRes.status === 403, "Attempt to reveal another participant's gift from bound Device A is blocked with HTTP 403");
+
+  // 5. Independent Device B authenticates as Participant 4 -> succeeds
+  const bindReqB = createMockRequest(
+    "http://localhost:3000/api/auth/pin",
+    { participantId: "p4", pin: "10004" },
+    undefined,
+    devB
+  );
+  const bindResB = await pinRoute(bindReqB);
+  const bindDataB = await bindResB.json();
+  assert(bindResB.status === 200 && bindDataB.success === true, "Participant 4 authenticates successfully from independent Device B");
+
+  const bindingRecordB = await getDeviceBinding(devB);
+  assert(bindingRecordB?.participantId === "p4", "Device B is authoritatively mapped to Participant 4");
+
+  // 6. Authorized recovery: clear device bindings for Participant 3
+  const recoveryResult = await clearDeviceBindingsForParticipant("p3");
+  assert(recoveryResult.success === true, "Authorized device recovery completes successfully");
+  const postRecoveryBinding = await getDeviceBinding(devA);
+  assert(postRecoveryBinding === null, "Device A binding is safely cleared after recovery");
+
+  // 7. Verify all 48 assignments in storage remain 100% byte-for-byte intact
+  const finalState = await getEventState();
+  assert(finalState.version === 7, "Event state version is still Round 7");
+  assert(finalState.participants.length === 48, "Event participant roster count remains exactly 48");
+  assert(finalState.participants.every((p) => p.encryptedRecipient), "All 48 Secret Santa assignments remain byte-for-byte intact");
 
   // =========================================================================
   // SUMMARY

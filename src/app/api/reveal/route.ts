@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revealRecipientWithPin } from "@/lib/storage";
-import { getSessionFromRequest } from "@/lib/session";
+import { revealRecipientWithPin, getDeviceBinding } from "@/lib/storage";
+import { getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Personal PIN is required to open your gift" }, { status: 400 });
     }
 
+    // Extract device identifier
+    const deviceId = getDeviceIdFromRequest(req);
+
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `reveal:${ip}:${participantId}`;
     const rateCheck = checkRateLimit(rateLimitKey);
@@ -36,7 +39,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify session lock: bound strictly to authenticated participant
+    // 1. Authoritative Device-Level Binding Check
+    const deviceBinding = await getDeviceBinding(deviceId);
+    if (deviceBinding && deviceBinding.participantId !== participantId) {
+      return NextResponse.json(
+        { success: false, error: "Access denied. This device is registered to another participant account." },
+        { status: 403 }
+      );
+    }
+
+    // 2. Verify session lock: bound strictly to authenticated participant
     const session = getSessionFromRequest(req);
     if (session && session.participantId !== participantId) {
       return NextResponse.json(

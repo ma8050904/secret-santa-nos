@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { put, list, get } from "@vercel/blob";
+import { put, list, get, del } from "@vercel/blob";
 import { PARTICIPANTS } from "./constants";
 import {
   generateChristmasPasscode,
@@ -49,6 +49,14 @@ export interface ParticipantRuntimeState {
   registeredAt: string;
 }
 
+export interface DeviceBindingRecord {
+  deviceId: string;
+  participantId: string;
+  participantName: string;
+  boundAt: string;
+  lastUsedAt: string;
+}
+
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
 function getStorageFilePath(): string {
   if (process.env.STORAGE_FILE_PATH) {
@@ -81,6 +89,19 @@ function getLocalParticipantDir(): string {
   return dir;
 }
 
+function getLocalDeviceDir(): string {
+  const base = getStorageFilePath();
+  const dir = path.join(path.dirname(base), "v7_devices");
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore in read-only lambdas
+    }
+  }
+  return dir;
+}
+
 let inMemoryStateCache: EventState | null = null;
 let inMemoryCacheTimestamp = 0;
 const CACHE_TTL_MS = 4000;
@@ -93,6 +114,7 @@ let writeLock: Promise<void> = Promise.resolve();
 
 // Concurrency-safe in-memory runtime caches
 const runtimeParticipantCache = new Map<string, ParticipantRuntimeState>();
+const deviceBindingCache = new Map<string, DeviceBindingRecord>();
 const revealedParticipantIds = new Set<string>();
 const registeredParticipantIds = new Set<string>();
 let lastMarkersSyncTimestamp = 0;
@@ -797,4 +819,192 @@ export async function getAdminSafeState(): Promise<{
       isRegistered: Boolean(p.pinHash || registeredParticipantIds.has(p.id)),
     })),
   };
+}
+
+/**
+ * Reads a device's binding record (checks cache, Vercel Blob, and local disk)
+ */
+export async function getDeviceBinding(
+  deviceId: string
+): Promise<DeviceBindingRecord | null> {
+  if (!deviceId || typeof deviceId !== "string") return null;
+  const cleanId = deviceId.trim().toLowerCase();
+
+  // Check in-memory cache
+  if (deviceBindingCache.has(cleanId)) {
+    return deviceBindingCache.get(cleanId)!;
+  }
+
+  // 1. Check Vercel Private Blob (if not in isolated test mode)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const url = `${KNOWN_BLOB_BASE}/v7/devices/${cleanId}.json`;
+      const res: any = await get(url, {
+        access: "private",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+
+      if (res && res.stream) {
+        const text = await new Response(res.stream).text();
+        const parsed: DeviceBindingRecord = JSON.parse(text);
+        deviceBindingCache.set(cleanId, parsed);
+        return parsed;
+      }
+    } catch {
+      // ignore miss
+    }
+  }
+
+  // 2. Check local disk
+  try {
+    const localFile = path.join(getLocalDeviceDir(), `${cleanId}.json`);
+    if (fs.existsSync(localFile)) {
+      const data = fs.readFileSync(localFile, "utf-8");
+      const parsed: DeviceBindingRecord = JSON.parse(data);
+      deviceBindingCache.set(cleanId, parsed);
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+/**
+ * Authoritatively binds a device to an authenticated participant.
+ * Prevents race conditions and duplicate multi-account device usage.
+ */
+export async function bindDeviceToParticipant(
+  deviceId: string,
+  participantId: string,
+  participantName: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!deviceId || typeof deviceId !== "string") {
+    return { success: false, error: "Invalid device identifier." };
+  }
+  const cleanId = deviceId.trim().toLowerCase();
+
+  // Check existing binding for race conditions
+  const existing = await getDeviceBinding(cleanId);
+  if (existing && existing.participantId !== participantId) {
+    return {
+      success: false,
+      error: "This device is registered to another participant account. Accessing multiple accounts from the same device is not permitted.",
+    };
+  }
+
+  const record: DeviceBindingRecord = {
+    deviceId: cleanId,
+    participantId,
+    participantName,
+    boundAt: existing?.boundAt || new Date().toISOString(),
+    lastUsedAt: new Date().toISOString(),
+  };
+
+  // Update in-memory cache
+  deviceBindingCache.set(cleanId, record);
+
+  const serialized = JSON.stringify(record, null, 2);
+
+  // 1. Persist to Vercel Private Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await Promise.all([
+        put(`v7/devices/${cleanId}.json`, serialized, {
+          access: "private",
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        }),
+        put(`v7/participant_devices/${participantId}/${cleanId}`, "1", {
+          access: "private",
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        }),
+      ]);
+    } catch (err) {
+      console.error("Critical: Failed to save device binding to Vercel Blob:", err);
+    }
+  }
+
+  // 2. Persist to local filesystem
+  try {
+    const dir = getLocalDeviceDir();
+    const filePath = path.join(dir, `${cleanId}.json`);
+    const tempPath = `${filePath}.${Date.now()}.${crypto.randomBytes(3).toString("hex")}.tmp`;
+    fs.writeFileSync(tempPath, serialized, "utf-8");
+    fs.renameSync(tempPath, filePath);
+  } catch {
+    // ignore
+  }
+
+  return { success: true };
+}
+
+/**
+ * Authorized recovery mechanism: Clears device bindings for a participant if device was lost/reset.
+ */
+export async function clearDeviceBindingsForParticipant(
+  participantId: string
+): Promise<{ success: boolean; clearedCount: number }> {
+  let clearedCount = 0;
+
+  // Clear in-memory cache entries matching this participant
+  for (const [devId, rec] of deviceBindingCache.entries()) {
+    if (rec.participantId === participantId) {
+      deviceBindingCache.delete(devId);
+      clearedCount++;
+    }
+  }
+
+  // 1. Cloud cleanup
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pDevicesList = await list({
+        prefix: `v7/participant_devices/${participantId}/`,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+
+      const urlsToDelete: string[] = pDevicesList.blobs.map((b) => b.url);
+
+      for (const b of pDevicesList.blobs) {
+        const devId = path.basename(b.pathname);
+        const devBlobUrl = `${KNOWN_BLOB_BASE}/v7/devices/${devId}.json`;
+        urlsToDelete.push(devBlobUrl);
+      }
+
+      if (urlsToDelete.length > 0) {
+        await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      }
+    } catch (err) {
+      console.warn("Notice: clearing device bindings in Blob:", err);
+    }
+  }
+
+  // 2. Local cleanup
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          const filePath = path.join(dir, f);
+          try {
+            const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+            if (data.participantId === participantId) {
+              fs.unlinkSync(filePath);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return { success: true, clearedCount };
 }

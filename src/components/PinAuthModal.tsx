@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { ArrowRight, KeyRound, Eye, EyeOff } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
+import { getDeviceHeaders } from "@/lib/device";
 
 interface PinAuthModalProps {
   participant: ParticipantItem;
@@ -46,7 +47,10 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
     try {
       const res = await fetch("/api/auth/pin", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getDeviceHeaders(),
+        },
         body: JSON.stringify({
           participantId: participant.id,
           pin: pin.trim(),
