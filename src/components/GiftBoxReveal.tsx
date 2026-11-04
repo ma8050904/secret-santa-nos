@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import confetti from "canvas-confetti";
-import { Sparkles, Gift, Eye, Lock } from "lucide-react";
+import { Sparkles, Gift } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
 import { getDeviceHeaders } from "@/lib/device";
 
@@ -28,52 +28,6 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
   );
   const [recipientName, setRecipientName] = useState<string | null>(initialRecipientName || null);
   const [error, setError] = useState<string | null>(null);
-
-  // Privacy Shield States
-  const [isHolding, setIsHolding] = useState(false);
-  const [isWindowFocused, setIsWindowFocused] = useState(true);
-
-  // Defensive lifecycle hooks for Privacy Shield
-  useEffect(() => {
-    const handleBlur = () => {
-      setIsHolding(false);
-      setIsWindowFocused(false);
-    };
-    const handleFocus = () => {
-      setIsWindowFocused(true);
-    };
-    const handleVisibility = () => {
-      if (document.hidden) {
-        setIsHolding(false);
-        setIsWindowFocused(false);
-      } else {
-        setIsWindowFocused(true);
-      }
-    };
-    const handleRelease = () => {
-      setIsHolding(false);
-    };
-
-    window.addEventListener("blur", handleBlur);
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("pagehide", handleBlur);
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("pointerup", handleRelease);
-    window.addEventListener("pointercancel", handleRelease);
-    window.addEventListener("touchend", handleRelease);
-    window.addEventListener("touchcancel", handleRelease);
-
-    return () => {
-      window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("pagehide", handleBlur);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pointerup", handleRelease);
-      window.removeEventListener("pointercancel", handleRelease);
-      window.removeEventListener("touchend", handleRelease);
-      window.removeEventListener("touchcancel", handleRelease);
-    };
-  }, []);
 
   // Trigger rich multi-stage festive confetti
   const triggerConfetti = () => {
@@ -149,26 +103,11 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-in fade-in duration-300">
       <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#0a2618] via-[#071d13] to-[#04120b] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.85)]">
-        {/* Privacy Defocus Overlay */}
-        {!isWindowFocused && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 p-6 text-center backdrop-blur-2xl">
-            <div className="rounded-full bg-red-950/80 p-4 border border-red-500/40 text-red-400 mb-3 animate-pulse">
-              <Lock className="h-8 w-8" />
-            </div>
-            <h3 className="font-serif text-lg font-bold text-amber-200">
-              🔒 Privacy Shield Active
-            </h3>
-            <p className="mt-2 text-xs text-emerald-200/80 max-w-xs">
-              Recipient name obscured while window is inactive. Tap or click this tab to resume.
-            </p>
-          </div>
-        )}
-
         {/* Header Controls */}
         <div className="flex items-center justify-end pb-1">
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-500/25 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-500/25 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white cursor-pointer"
             aria-label="Close"
           >
             ✕
@@ -233,7 +172,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
             {stage === "ready_to_open" ? (
               <button
                 onClick={handleOpenGift}
-                className="group mx-auto flex items-center justify-center gap-2 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-600 px-8 py-3.5 text-sm font-extrabold tracking-wider text-slate-950 shadow-[0_0_30px_rgba(212,175,55,0.6)] transition-all hover:scale-105 hover:brightness-110"
+                className="group mx-auto flex items-center justify-center gap-2 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-600 px-8 py-3.5 text-sm font-extrabold tracking-wider text-slate-950 shadow-[0_0_30px_rgba(212,175,55,0.6)] transition-all hover:scale-105 hover:brightness-110 cursor-pointer"
               >
                 <Gift className="h-4 w-4" />
                 <span>OPEN YOUR GIFT</span>
@@ -249,7 +188,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         )}
 
         {/* =========================================================================
-            STAGE 3: REVEALED RESULT (PRESS & HOLD PRIVACY SHIELD)
+            STAGE 3: REVEALED RESULT (DIRECT CLEAN DISPLAY)
            ========================================================================= */}
         {stage === "revealed" && recipientName && (
           <div className="text-center py-2 animate-in zoom-in-95 duration-500">
@@ -257,47 +196,18 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
               YOUR SECRET SANTA PERSON IS...
             </h4>
 
-            {/* Recipient Showcase Card with Press-and-Hold Shield */}
-            <div className="relative my-5 overflow-hidden rounded-3xl border-2 border-amber-400 bg-gradient-to-br from-[#123824] via-[#0b2417] to-[#04120b] p-6 shadow-[0_0_40px_rgba(212,175,55,0.4)]">
+            {/* Recipient Showcase Card */}
+            <div className="relative my-6 overflow-hidden rounded-3xl border-2 border-amber-400 bg-gradient-to-br from-[#123824] via-[#0b2417] to-[#04120b] p-6 shadow-[0_0_40px_rgba(212,175,55,0.4)]">
               <div className="absolute top-2 left-3 text-lg opacity-75">✨</div>
               <div className="absolute top-2 right-3 text-lg opacity-75">✨</div>
               <div className="absolute bottom-2 left-3 text-lg opacity-75">🎄</div>
               <div className="absolute bottom-2 right-3 text-lg opacity-75">🎁</div>
 
-              {isHolding ? (
-                <div className="py-5 select-none animate-in zoom-in-95 duration-150">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-3 rounded-full border border-emerald-500/40 bg-emerald-950/70 text-[11px] font-semibold text-emerald-300">
-                    <Eye className="h-3.5 w-3.5 animate-pulse" />
-                    <span>Viewing privately (Release finger to hide)</span>
-                  </div>
-                  <h2 className="font-serif text-3xl sm:text-4xl font-extrabold tracking-wide gold-text drop-shadow-[0_4px_16px_rgba(212,175,55,0.7)]">
-                    {recipientName}
-                  </h2>
-                </div>
-              ) : (
-                <div
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setIsHolding(true);
-                  }}
-                  onPointerUp={() => setIsHolding(false)}
-                  onPointerLeave={() => setIsHolding(false)}
-                  onPointerCancel={() => setIsHolding(false)}
-                  onTouchCancel={() => setIsHolding(false)}
-                  className="my-3 py-6 px-4 rounded-2xl border-2 border-dashed border-amber-400/50 bg-[#0d2a1c]/80 flex flex-col items-center justify-center cursor-pointer select-none active:scale-95 transition-all hover:border-amber-400 hover:bg-[#123a26]"
-                  style={{ touchAction: "none", userSelect: "none" }}
-                >
-                  <div className="rounded-full bg-amber-500/20 p-3 mb-2 text-amber-300 animate-bounce-gentle">
-                    <Lock className="h-6 w-6" />
-                  </div>
-                  <span className="font-serif text-base font-bold text-amber-200">
-                    👆 PRESS & HOLD TO REVEAL
-                  </span>
-                  <span className="mt-1 text-[11px] text-emerald-200/70 text-center max-w-[240px]">
-                    Keep your finger pressed to view your person. Releases immediately when let go.
-                  </span>
-                </div>
-              )}
+              <div className="py-5">
+                <h2 className="font-serif text-3xl sm:text-4xl font-extrabold tracking-wide gold-text drop-shadow-[0_4px_16px_rgba(212,175,55,0.7)]">
+                  {recipientName}
+                </h2>
+              </div>
 
               {/* Shhh footer */}
               <div className="mt-2 border-t border-amber-400/20 pt-3">
@@ -311,7 +221,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
             <div className="flex items-center justify-center gap-3">
               <button
                 onClick={onClose}
-                className="rounded-xl border border-emerald-700/40 bg-emerald-950/80 px-6 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-900"
+                className="rounded-xl border border-emerald-700/40 bg-emerald-950/80 px-6 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-900 cursor-pointer"
               >
                 Close
               </button>
