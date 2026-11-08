@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminRequest } from "@/lib/admin-auth";
 import { getAdminSafeState } from "@/lib/storage";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Administrative event status endpoint.
  * STRICT SECURITY REQUIREMENT:

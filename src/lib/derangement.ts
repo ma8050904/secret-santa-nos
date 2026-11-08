@@ -248,7 +248,7 @@ export function generateSecretSantaDerangement(
   return assignments;
 }
 
-function generateSubgroup20Pairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
+export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
   const ghazal = participants.find((p) => p.name === MANDATORY_RECIPROCAL_A);
   const george = participants.find((p) => p.name === MANDATORY_RECIPROCAL_B);
 

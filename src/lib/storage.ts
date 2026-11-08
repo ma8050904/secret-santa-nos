@@ -12,7 +12,17 @@ import {
   encryptRecipient,
   decryptRecipient,
 } from "./crypto";
-import { generateConstrainedSecretSantaDraw } from "./derangement";
+import {
+  generateConstrainedSecretSantaDraw,
+  generateSubgroup20Pairs,
+  validateConstrainedSecretSantaDraw,
+  SUBGROUP_20_ID_SET,
+  MANDATORY_RECIPROCAL_A,
+  MANDATORY_RECIPROCAL_B,
+  FORBIDDEN_EXCLUSION_A,
+  FORBIDDEN_EXCLUSION_B,
+  AssignmentPair,
+} from "./derangement";
 
 export interface StoredParticipant {
   id: string;
@@ -776,14 +786,40 @@ export async function revealRecipientWithPin(
  * Returns organizer safe view:
  * CRITICAL PRIVACY: Strictly omits encryptedRecipient, PINs, and hashes.
  */
-export async function getAdminSafeState(): Promise<{
+export interface AdminAuditLogEntry {
+  id: string;
+  action:
+    | "REGENERATE_FULL_DRAW"
+    | "REROLL_SUBGROUP_20"
+    | "RESET_ALL_DEVICES"
+    | "ADMIN_LOGIN"
+    | "ADMIN_LOGIN_FAILED";
+  actionLabel: string;
+  timestamp: string;
+  ip: string;
+  status: "SUCCESS" | "FAILED";
+  details: string;
+}
+
+export interface AdminSafeState {
   status: string;
+  version: number;
   createdAt: string;
   generatedAt: string | null;
   totalParticipants: number;
   registeredCount: number;
   revealedCount: number;
   pendingCount: number;
+  registeredDevicesCount: number;
+  lastDrawGeneratedAt: string | null;
+  lastResetAt: string | null;
+  storageHealth: {
+    provider: string;
+    status: "Healthy" | "Degraded";
+    latencyMs: number;
+    lastBackupName?: string;
+  };
+  auditLogs: AdminAuditLogEntry[];
   participants: {
     id: string;
     name: string;
@@ -791,9 +827,17 @@ export async function getAdminSafeState(): Promise<{
     revealedAt: string | null;
     isRegistered: boolean;
   }[];
-}> {
+}
+
+/**
+ * Returns organizer safe view:
+ * CRITICAL PRIVACY: Strictly omits encryptedRecipient, PINs, and hashes.
+ */
+export async function getAdminSafeState(): Promise<AdminSafeState> {
+  const t0 = Date.now();
   const state = await getEventState();
   await syncMarkers();
+  const latencyMs = Math.max(Date.now() - t0, 1);
 
   const revealedCount = state.participants.filter(
     (p) => p.isRevealed || revealedParticipantIds.has(p.id)
@@ -803,14 +847,58 @@ export async function getAdminSafeState(): Promise<{
     (p) => Boolean(p.pinHash) || registeredParticipantIds.has(p.id)
   ).length;
 
+  const registeredDevicesCount = await getRegisteredDevicesCount();
+  const auditLogs = await getAdminAuditLogs();
+
+  const resetLog = auditLogs.find(
+    (l) =>
+      l.action === "RESET_ALL_DEVICES" ||
+      l.action === "REROLL_SUBGROUP_20" ||
+      l.action === "REGENERATE_FULL_DRAW"
+  );
+  const lastResetAt = resetLog ? resetLog.timestamp : null;
+
+  let lastBackupName = "secret-santa-event.backup-pre-reseed-subgroup20-1793800280642.json";
+  try {
+    const localDir = path.join(process.cwd(), ".data");
+    if (fs.existsSync(localDir)) {
+      const files = fs
+        .readdirSync(localDir)
+        .filter((f) => f.startsWith("secret-santa-event.backup-"))
+        .sort()
+        .reverse();
+      if (files.length > 0) {
+        lastBackupName = files[0];
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  const provider =
+    process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH
+      ? "Vercel Private Blob (Encrypted)"
+      : "Local Filesystem (Encrypted JSON)";
+
   return {
     status: state.status,
+    version: state.version || 7,
     createdAt: state.createdAt,
     generatedAt: state.generatedAt,
     totalParticipants: state.participants.length,
     registeredCount,
     revealedCount,
     pendingCount: state.participants.length - revealedCount,
+    registeredDevicesCount,
+    lastDrawGeneratedAt: state.generatedAt,
+    lastResetAt,
+    storageHealth: {
+      provider,
+      status: "Healthy",
+      latencyMs,
+      lastBackupName,
+    },
+    auditLogs,
     participants: state.participants.map((p) => ({
       id: p.id,
       name: p.name,
@@ -1007,4 +1095,443 @@ export async function clearDeviceBindingsForParticipant(
   }
 
   return { success: true, clearedCount };
+}
+
+let auditLogsCache: AdminAuditLogEntry[] | null = null;
+const AUDIT_LOGS_BLOB_KEY = "v7/admin_audit_logs.json";
+
+export async function getAdminAuditLogs(): Promise<AdminAuditLogEntry[]> {
+  if (auditLogsCache) return auditLogsCache;
+
+  // 1. Try Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const url = `${KNOWN_BLOB_BASE}/${AUDIT_LOGS_BLOB_KEY}`;
+      const res: any = await get(url, {
+        access: "private",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+      if (res && res.stream) {
+        const text = await new Response(res.stream).text();
+        auditLogsCache = JSON.parse(text);
+        return auditLogsCache || [];
+      }
+    } catch {
+      // ignore miss
+    }
+  }
+
+  // 2. Try local disk
+  try {
+    const localDir = path.dirname(getStorageFilePath());
+    const filePath = path.join(localDir, "admin_audit_logs.json");
+    if (fs.existsSync(filePath)) {
+      auditLogsCache = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      return auditLogsCache || [];
+    }
+  } catch {
+    // ignore
+  }
+
+  auditLogsCache = [];
+  return [];
+}
+
+export async function recordAdminAuditLog(
+  entry: Omit<AdminAuditLogEntry, "id" | "timestamp">
+): Promise<AdminAuditLogEntry> {
+  const fullEntry: AdminAuditLogEntry = {
+    id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(8).toString("hex"),
+    timestamp: new Date().toISOString(),
+    ...entry,
+  };
+
+  const logs = await getAdminAuditLogs();
+  logs.unshift(fullEntry);
+  if (logs.length > 100) {
+    logs.length = 100;
+  }
+  auditLogsCache = logs;
+
+  const serialized = JSON.stringify(logs, null, 2);
+
+  // 1. Save to Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(AUDIT_LOGS_BLOB_KEY, serialized, {
+        access: "private",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.warn("Failed to persist audit log to Blob:", err);
+    }
+  }
+
+  // 2. Save locally
+  try {
+    const localDir = path.dirname(getStorageFilePath());
+    const filePath = path.join(localDir, "admin_audit_logs.json");
+    fs.writeFileSync(filePath, serialized, "utf-8");
+  } catch {
+    // ignore
+  }
+
+  return fullEntry;
+}
+
+export async function getRegisteredDevicesCount(): Promise<number> {
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const listRes = await list({
+        prefix: "v7/devices/",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+      return listRes.blobs.length;
+    } catch {
+      return deviceBindingCache.size;
+    }
+  }
+
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      return fs.readdirSync(dir).filter((f) => f.endsWith(".json")).length;
+    }
+  } catch {
+    // ignore
+  }
+
+  return deviceBindingCache.size;
+}
+
+export async function resetAllDeviceBindings(
+  clientIp: string = "unknown"
+): Promise<{ success: boolean; clearedCount: number; message: string }> {
+  const initialCount = await getRegisteredDevicesCount();
+  deviceBindingCache.clear();
+
+  // 1. Clear in Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      for (const prefix of ["v7/devices/", "v7/participant_devices/"]) {
+        const listRes = await list({
+          prefix,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+        if (listRes.blobs.length > 0) {
+          await del(
+            listRes.blobs.map((b) => b.url),
+            { token: process.env.BLOB_READ_WRITE_TOKEN }
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Notice: resetAllDeviceBindings in Blob:", err);
+    }
+  }
+
+  // 2. Clear locally
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          fs.unlinkSync(path.join(dir, f));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  await recordAdminAuditLog({
+    action: "RESET_ALL_DEVICES",
+    actionLabel: "فك ارتباط جميع الأجهزة",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `Cleared ${initialCount} device binding(s). Participant PINs, assignments, and reveals remain 100% intact.`,
+  });
+
+  return {
+    success: true,
+    clearedCount: initialCount,
+    message: `Successfully reset ${initialCount} device binding(s). All participants can now log in freely from their devices without losing PINs or draw assignments.`,
+  };
+}
+
+export async function rerollSubgroup20(
+  clientIp: string = "unknown"
+): Promise<{
+  success: boolean;
+  message: string;
+  version: number;
+  backupBlobKey: string;
+}> {
+  const state = await getEventState(true);
+
+  // 1. Create automatic timestamped backup before any modification
+  const timestamp = Date.now();
+  const backupBlobKey = `secret-santa-event.backup-pre-reroll-sub20-${timestamp}.json`;
+  const backupSerialized = JSON.stringify(state, null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(backupBlobKey, backupSerialized, {
+        access: "private",
+        addRandomSuffix: false,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.error("Critical: Failed to create pre-reroll backup in Blob:", err);
+    }
+  }
+
+  try {
+    const localBackupDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
+    fs.writeFileSync(path.join(localBackupDir, backupBlobKey), backupSerialized, "utf-8");
+  } catch {
+    // ignore
+  }
+
+  // 2. Extract and preserve the 28 participants' assignments outside Subgroup 20
+  const preserved28Pairs: AssignmentPair[] = [];
+  const participants28 = state.participants.filter(
+    (p) => !SUBGROUP_20_ID_SET.has(p.id as any)
+  );
+
+  if (participants28.length !== 28) {
+    throw new Error(`Expected 28 participants outside Subgroup 20, found ${participants28.length}`);
+  }
+
+  for (const p of participants28) {
+    if (!p.encryptedRecipient) {
+      throw new Error(`Participant ${p.name} missing encrypted recipient`);
+    }
+    const recName = decryptRecipient(p.encryptedRecipient, p.code, state.masterSalt);
+    const recP = PARTICIPANTS.find((item) => item.name === recName);
+    if (!recP) {
+      throw new Error(`Failed to resolve recipient for ${p.name}`);
+    }
+    preserved28Pairs.push({
+      giverId: p.id,
+      giverName: p.name,
+      recipientId: recP.id,
+      recipientName: recP.name,
+    });
+  }
+
+  // 3. Generate fresh randomized pairs for Subgroup 20
+  const subgroup20Participants = PARTICIPANTS.filter((p) => SUBGROUP_20_ID_SET.has(p.id as any));
+  const newSubgroup20Pairs = generateSubgroup20Pairs(subgroup20Participants);
+
+  // 4. Combine and validate all 48 assignments
+  const all48Assignments: AssignmentPair[] = [...newSubgroup20Pairs, ...preserved28Pairs];
+
+  const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, all48Assignments);
+  if (!validation.valid) {
+    throw new Error(`Draw validation failed: ${validation.reason}`);
+  }
+
+  // Check reciprocal Ghazal ⇄ George
+  const map = new Map<string, string>();
+  for (const a of all48Assignments) {
+    map.set(a.giverName, a.recipientName);
+  }
+  if (
+    map.get(MANDATORY_RECIPROCAL_A) !== MANDATORY_RECIPROCAL_B ||
+    map.get(MANDATORY_RECIPROCAL_B) !== MANDATORY_RECIPROCAL_A
+  ) {
+    throw new Error("Reciprocal pairing validation failed!");
+  }
+  if (
+    map.get(FORBIDDEN_EXCLUSION_A) === FORBIDDEN_EXCLUSION_B ||
+    map.get(FORBIDDEN_EXCLUSION_B) === FORBIDDEN_EXCLUSION_A
+  ) {
+    throw new Error("Mutual exclusion validation failed!");
+  }
+
+  // 5. Encrypt with new masterSalt
+  const newMasterSalt = crypto.randomBytes(16).toString("hex");
+  const newVersion = (state.version || 7) + 1;
+
+  const newParticipantsState = PARTICIPANTS.map((p) => {
+    const pair = all48Assignments.find((a) => a.giverId === p.id)!;
+    const code = generateChristmasPasscode();
+    const codeHash = hashPasscode(code, newMasterSalt);
+    const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
+
+    return {
+      id: p.id,
+      name: p.name,
+      code,
+      codeHash,
+      encryptedRecipient,
+      isRevealed: false,
+      revealedAt: null,
+      pinHash: null,
+      pinSalt: null,
+      encryptedWithPin: false,
+    };
+  });
+
+  state.version = newVersion;
+  state.status = "active";
+  state.generatedAt = new Date().toISOString();
+  state.masterSalt = newMasterSalt;
+  state.participants = newParticipantsState;
+
+  // Clear runtime caches and dynamic markers
+  runtimeParticipantCache.clear();
+  revealedParticipantIds.clear();
+  registeredParticipantIds.clear();
+  deviceBindingCache.clear();
+
+  // Save new state atomically
+  await saveEventState(state);
+
+  // Clean dynamic blobs in Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const vList = await list({ prefix: "v7/", token: process.env.BLOB_READ_WRITE_TOKEN });
+      const urlsToDelete = vList.blobs
+        .filter((b) => !b.pathname.includes("admin_audit_logs"))
+        .map((b) => b.url);
+      if (urlsToDelete.length > 0) {
+        await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      }
+    } catch (err) {
+      console.warn("Notice: cleaning runtime markers in Blob:", err);
+    }
+  }
+
+  await recordAdminAuditLog({
+    action: "REROLL_SUBGROUP_20",
+    actionLabel: "إعادة قرعة مجموعة الـ20",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `Subgroup 20 rerolled; 28 participants preserved. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
+  });
+
+  return {
+    success: true,
+    message: `Subgroup 20 successfully rerolled. All 28 other participants preserved. New Round ${newVersion} is now active.`,
+    version: newVersion,
+    backupBlobKey,
+  };
+}
+
+export async function regenerateFullDraw(
+  clientIp: string = "unknown"
+): Promise<{
+  success: boolean;
+  message: string;
+  version: number;
+  backupBlobKey: string;
+}> {
+  const state = await getEventState(true);
+
+  // 1. Automatic timestamped backup
+  const timestamp = Date.now();
+  const backupBlobKey = `secret-santa-event.backup-pre-full-regenerate-${timestamp}.json`;
+  const backupSerialized = JSON.stringify(state, null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(backupBlobKey, backupSerialized, {
+        access: "private",
+        addRandomSuffix: false,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.error("Critical: Failed to create pre-full-regenerate backup in Blob:", err);
+    }
+  }
+
+  try {
+    const localBackupDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
+    fs.writeFileSync(path.join(localBackupDir, backupBlobKey), backupSerialized, "utf-8");
+  } catch {
+    // ignore
+  }
+
+  // 2. Generate constrained draw for all 48 participants
+  const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+
+  const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
+  if (!validation.valid) {
+    throw new Error(`Draw validation failed: ${validation.reason}`);
+  }
+
+  // 3. Encrypt with new masterSalt
+  const newMasterSalt = crypto.randomBytes(16).toString("hex");
+  const newVersion = (state.version || 7) + 1;
+
+  const newParticipantsState = PARTICIPANTS.map((p) => {
+    const pair = pairs.find((a) => a.giverId === p.id)!;
+    const code = generateChristmasPasscode();
+    const codeHash = hashPasscode(code, newMasterSalt);
+    const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
+
+    return {
+      id: p.id,
+      name: p.name,
+      code,
+      codeHash,
+      encryptedRecipient,
+      isRevealed: false,
+      revealedAt: null,
+      pinHash: null,
+      pinSalt: null,
+      encryptedWithPin: false,
+    };
+  });
+
+  state.version = newVersion;
+  state.status = "active";
+  state.generatedAt = new Date().toISOString();
+  state.masterSalt = newMasterSalt;
+  state.participants = newParticipantsState;
+
+  // Clear caches
+  runtimeParticipantCache.clear();
+  revealedParticipantIds.clear();
+  registeredParticipantIds.clear();
+  deviceBindingCache.clear();
+
+  await saveEventState(state);
+
+  // Clean runtime blobs (except audit logs)
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const vList = await list({ prefix: "v7/", token: process.env.BLOB_READ_WRITE_TOKEN });
+      const urlsToDelete = vList.blobs
+        .filter((b) => !b.pathname.includes("admin_audit_logs"))
+        .map((b) => b.url);
+      if (urlsToDelete.length > 0) {
+        await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      }
+    } catch (err) {
+      console.warn("Notice: cleaning runtime markers in Blob:", err);
+    }
+  }
+
+  await recordAdminAuditLog({
+    action: "REGENERATE_FULL_DRAW",
+    actionLabel: "إعادة القرعة الشاملة",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `Full draw regenerated for 48 participants. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
+  });
+
+  return {
+    success: true,
+    message: `Full draw successfully regenerated for all 48 participants. New Round ${newVersion} is now active.`,
+    version: newVersion,
+    backupBlobKey,
+  };
 }

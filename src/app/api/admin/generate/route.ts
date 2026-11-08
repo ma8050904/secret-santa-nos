@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminRequest } from "@/lib/admin-auth";
-import { generateAssignments } from "@/lib/storage";
+import { regenerateFullDraw } from "@/lib/storage";
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,14 +8,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized. Admin credentials required." }, { status: 401 });
     }
 
-    const body = await req.json().catch(() => ({}));
-    const force = Boolean(body.force);
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      "127.0.0.1";
 
-    const result = await generateAssignments(force);
+    const result = await regenerateFullDraw(ip);
 
     return NextResponse.json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Error generating assignments";
+    const message = err instanceof Error ? err.message : "Error regenerating full draw";
     return NextResponse.json({ success: false, error: message }, { status: 400 });
   }
 }
