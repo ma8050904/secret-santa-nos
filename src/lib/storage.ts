@@ -1249,7 +1249,7 @@ export async function resetAllDeviceBindings(
 
   await recordAdminAuditLog({
     action: "RESET_ALL_DEVICES",
-    actionLabel: "فك ارتباط جميع الأجهزة",
+    actionLabel: "Reset All Device Bindings",
     ip: clientIp,
     status: "SUCCESS",
     details: `Cleared ${initialCount} device binding(s). Participant PINs, assignments, and reveals remain 100% intact.`,
@@ -1410,7 +1410,7 @@ export async function rerollSubgroup20(
 
   await recordAdminAuditLog({
     action: "REROLL_SUBGROUP_20",
-    actionLabel: "إعادة قرعة مجموعة الـ20",
+    actionLabel: "Reroll 20-Person Subgroup",
     ip: clientIp,
     status: "SUCCESS",
     details: `Subgroup 20 rerolled; 28 participants preserved. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
@@ -1522,7 +1522,7 @@ export async function regenerateFullDraw(
 
   await recordAdminAuditLog({
     action: "REGENERATE_FULL_DRAW",
-    actionLabel: "إعادة القرعة الشاملة",
+    actionLabel: "Regenerate Full Draw",
     ip: clientIp,
     status: "SUCCESS",
     details: `Full draw regenerated for 48 participants. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,

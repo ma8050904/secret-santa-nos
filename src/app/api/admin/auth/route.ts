@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     if (!secureCompare(password, APP_CONFIG.ADMIN_DEFAULT_PASSWORD)) {
       await recordAdminAuditLog({
         action: "ADMIN_LOGIN_FAILED",
-        actionLabel: "محاولة دخول إدارية فاشلة",
+        actionLabel: "Failed Admin Login Attempt",
         ip,
         status: "FAILED",
         details: "Attempted login with incorrect organizer password.",
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     await recordAdminAuditLog({
       action: "ADMIN_LOGIN",
-      actionLabel: "تسجيل دخول إداري ناجح",
+      actionLabel: "Successful Admin Login",
       ip,
       status: "SUCCESS",
       details: "Organizer authenticated successfully into Control Center.",

@@ -449,7 +449,7 @@ export default function AdminDashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-red-200/90 leading-relaxed">
-                      إعادة القرعة لجميع المشاركين مع المحافظة على جميع الشروط الحالية.
+                      Regenerate the draw for all participants while strictly preserving all current rules.
                     </p>
                     <p className="mt-2 text-[11px] text-red-300/60 leading-normal">
                       Creates an automatic backup. Regenerates assignments for all 48 participants while preserving Subgroups 1 & 2 partitions, Ghazal ⇄ George, and Zeina ⇎ Hamza constraints.
@@ -479,7 +479,7 @@ export default function AdminDashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-amber-200/90 leading-relaxed">
-                      إعادة قرعة المجموعة المحددة فقط، مع إبقاء تعيينات الـ28 الآخرين دون تغيير.
+                      Reroll the specified subgroup only, leaving the assignments of the other 28 unchanged.
                     </p>
                     <p className="mt-2 text-[11px] text-amber-300/60 leading-normal">
                       Creates an automatic backup. Rerolls the 20-person closed group with mandatory constraints while preserving the other 28 assignments byte-for-byte.
@@ -522,10 +522,10 @@ export default function AdminDashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-sky-200/90 leading-relaxed max-w-2xl">
-                      فك ارتباط الأجهزة المسجلة حتى يستطيع المشاركون الدخول مجدداً.
+                      Unlink registered devices so participants can log in again.
                     </p>
                     <p className="mt-1.5 text-[11px] text-emerald-300/80 max-w-2xl">
-                      🛡️ <strong>فصل العمليتين:</strong> فك ارتباط الأجهزة لا يحذف PINs المشاركين، ولا يعيد توليد القرعة، ولا يمس حالات الكشف. يتم فقط تحرير الأجهزة المقفولة لتمكين الدخول من هواتف جديدة عند الحاجة.
+                      🛡️ <strong>Separated Operations:</strong> Unlinking devices does not delete participant PINs, regenerate the draw, or alter reveal statuses. It only frees locked devices so participants can log in from a new device when necessary.
                     </p>
                   </div>
 
@@ -602,12 +602,12 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              {/* Audit Ledger Table (سجل العمليات الإدارية) */}
+              {/* Audit Ledger Table */}
               <div className="mt-8">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-bold text-amber-200 flex items-center gap-2">
                     <History className="h-4 w-4 text-amber-400" />
-                    <span>سجل العمليات الإدارية ومحاولات الدخول (Audit Ledger)</span>
+                    <span>Administrative Activity & Login Audit Ledger</span>
                   </h4>
                   <span className="text-[11px] text-emerald-300/60">
                     {state.auditLogs.length} entries recorded
@@ -774,16 +774,16 @@ export default function AdminDashboardPage() {
                     </div>
                     <div>
                       <h3 className="font-serif text-lg font-bold text-white">
-                        تأكيد إعادة القرعة الشاملة (Full Draw)
+                        Confirm Full Draw Regeneration
                       </h3>
-                      <p className="text-xs text-red-300/80">عملية حساسة تتطلب تأكيداً صريحاً</p>
+                      <p className="text-xs text-red-300/80">Destructive action requiring explicit confirmation</p>
                     </div>
                   </div>
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
-                    <p>• <strong>نسخة احتياطية مشفرة:</strong> سيتم حفظ نسخة احتياطية تلقائية (Automatic Backup) قبل أي تعديل على القرعة.</p>
-                    <p>• <strong>إعادة التوزيع الشامل:</strong> سيتم إعادة تعيين أزواج القرعة لجميع المشاركين الـ 48 مع الالتزام بكافة الشروط المعتمدة (المجموعتان، غزل ⇄ جورج، وزينة ⇎ حمزة).</p>
-                    <p>• <strong>تصفير الجلسات:</strong> تبدأ جولة جديدة برقم محدث وتعود حالات الكشف لـ 0 ليقوم كل مشارك بوضع PIN جديد.</p>
+                    <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
+                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all 48 participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, and Zeina ⇎ Hamza).</p>
+                    <p>• <strong>Round Reset:</strong> Starts a new round with an incremented version number; reveals reset to 0 so participants can set a fresh PIN.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">
@@ -793,7 +793,7 @@ export default function AdminDashboardPage() {
                       disabled={isActionSubmitting}
                       className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
                     >
-                      إلغاء (Cancel)
+                      Cancel
                     </button>
                     <button
                       type="button"
@@ -804,12 +804,12 @@ export default function AdminDashboardPage() {
                       {isActionSubmitting ? (
                         <>
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>جارٍ إعادة القرعة...</span>
+                          <span>Regenerating draw...</span>
                         </>
                       ) : (
                         <>
                           <RotateCcw className="h-3.5 w-3.5" />
-                          <span>تأكيد إعادة القرعة الشاملة</span>
+                          <span>Confirm Full Draw Regeneration</span>
                         </>
                       )}
                     </button>
@@ -826,16 +826,16 @@ export default function AdminDashboardPage() {
                     </div>
                     <div>
                       <h3 className="font-serif text-lg font-bold text-white">
-                        تأكيد إعادة قرعة مجموعة الـ 20 (Reroll Subgroup)
+                        Confirm 20-Person Subgroup Reroll
                       </h3>
-                      <p className="text-xs text-amber-300/80">إبقاء تعيينات الـ 28 الآخرين دون تغيير</p>
+                      <p className="text-xs text-amber-300/80">Assignments for the other 28 participants remain untouched</p>
                     </div>
                   </div>
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
-                    <p>• <strong>نسخة احتياطية تلقائية:</strong> سيتم إنشاء Backup فوري وكامل للحالة الحالية قبل أي تعديل.</p>
-                    <p>• <strong>المجموعة المحددة فقط:</strong> يعاد سحب قرعة الأسماء الـ 20 مع الحفاظ التام على القيود الخاصة (غزل ⇄ جورج، وزينة ⇎ حمزة).</p>
-                    <p>• <strong>حماية الـ 28 الآخرين:</strong> تعيينات الـ 28 شخصاً تظل ثابتة ومطابقة بنسبة 100% كما هي دون أي تعديل.</p>
+                    <p>• <strong>Automatic Backup:</strong> An immediate, complete backup of the current state is stored before changes.</p>
+                    <p>• <strong>Designated Group Only:</strong> Only the 20 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza).</p>
+                    <p>• <strong>Preservation of 28:</strong> Assignments for the remaining 28 participants remain 100% byte-for-byte identical.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">
@@ -845,7 +845,7 @@ export default function AdminDashboardPage() {
                       disabled={isActionSubmitting}
                       className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
                     >
-                      إلغاء (Cancel)
+                      Cancel
                     </button>
                     <button
                       type="button"
@@ -856,12 +856,12 @@ export default function AdminDashboardPage() {
                       {isActionSubmitting ? (
                         <>
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>جارٍ إعادة السحب...</span>
+                          <span>Rerolling subgroup...</span>
                         </>
                       ) : (
                         <>
                           <Dices className="h-3.5 w-3.5" />
-                          <span>تأكيد سحب مجموعة الـ 20</span>
+                          <span>Confirm 20-Person Subgroup Reroll</span>
                         </>
                       )}
                     </button>
@@ -878,16 +878,16 @@ export default function AdminDashboardPage() {
                     </div>
                     <div>
                       <h3 className="font-serif text-lg font-bold text-white">
-                        فك ارتباط الأجهزة المسجلة (Reset Device Bindings)
+                        Reset Registered Device Bindings
                       </h3>
-                      <p className="text-xs text-sky-300/80">تحرير الأجهزة دون المساس بالحسابات</p>
+                      <p className="text-xs text-sky-300/80">Release bound devices without affecting participant accounts</p>
                     </div>
                   </div>
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-sky-500/30 bg-sky-950/30 p-4">
-                    <p>• <strong>فك أقفال الأجهزة:</strong> يتم فك ارتباط الأجهزة الحالية المسجلة فوراً.</p>
-                    <p>• <strong>عدم المساس بالبيانات (Preservation):</strong> لا يتم حذف أي PIN، ولا يتم تغيير أي قرعة، وحالات الكشف السابقة تبقى محفوظة بالكامل.</p>
-                    <p>• <strong>استخدام فوري:</strong> يستطيع أي مشارك بدل هاتفه أو مسح بيانات متصفحه الدخول مجدداً بـ PIN الخاص به بسلاسة.</p>
+                    <p>• <strong>Device Unlock:</strong> Immediately unlinks all currently registered devices.</p>
+                    <p>• <strong>Data Preservation:</strong> Does not delete any PINs, does not alter the draw, and leaves reveal statuses intact.</p>
+                    <p>• <strong>Immediate Re-entry:</strong> Any participant who changed their phone or cleared browser data can log in again using their existing PIN.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">
@@ -897,7 +897,7 @@ export default function AdminDashboardPage() {
                       disabled={isActionSubmitting}
                       className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
                     >
-                      إلغاء (Cancel)
+                      Cancel
                     </button>
                     <button
                       type="button"
@@ -908,12 +908,12 @@ export default function AdminDashboardPage() {
                       {isActionSubmitting ? (
                         <>
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>جارٍ فك الارتباط...</span>
+                          <span>Resetting device bindings...</span>
                         </>
                       ) : (
                         <>
                           <Smartphone className="h-3.5 w-3.5" />
-                          <span>تأكيد فك ارتباط الأجهزة</span>
+                          <span>Confirm Device Reset</span>
                         </>
                       )}
                     </button>
