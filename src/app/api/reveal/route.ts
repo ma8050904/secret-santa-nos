@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revealRecipientWithPin, getDeviceBinding } from "@/lib/storage";
+import { revealRecipientWithPin, getDeviceBinding, recordDeviceReveal } from "@/lib/storage";
 import { getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
@@ -70,6 +70,9 @@ export async function POST(req: NextRequest) {
     }
 
     resetRateLimit(rateLimitKey);
+
+    const userAgent = req.headers.get("user-agent") || "";
+    await recordDeviceReveal(deviceId, participantId, { ip, userAgent });
 
     return NextResponse.json({
       success: true,

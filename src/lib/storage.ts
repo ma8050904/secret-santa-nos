@@ -3,6 +3,7 @@ import path from "path";
 import crypto from "crypto";
 import { put, list, get, del } from "@vercel/blob";
 import { PARTICIPANTS } from "./constants";
+import { parseUserAgentDetails } from "./device-info";
 import {
   generateChristmasPasscode,
   hashPasscode,
@@ -65,6 +66,14 @@ export interface DeviceBindingRecord {
   participantName: string;
   boundAt: string;
   lastUsedAt: string;
+  ip?: string;
+  userAgent?: string;
+  deviceModel?: string;
+  os?: string;
+  browser?: string;
+  summary?: string;
+  hasRevealed?: boolean;
+  revealedAt?: string | null;
 }
 
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
@@ -793,7 +802,8 @@ export interface AdminAuditLogEntry {
     | "REROLL_SUBGROUP_20"
     | "RESET_ALL_DEVICES"
     | "ADMIN_LOGIN"
-    | "ADMIN_LOGIN_FAILED";
+    | "ADMIN_LOGIN_FAILED"
+    | "GIFT_REVEALED";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -820,12 +830,18 @@ export interface AdminSafeState {
     lastBackupName?: string;
   };
   auditLogs: AdminAuditLogEntry[];
+  devices: DeviceBindingRecord[];
   participants: {
     id: string;
     name: string;
     isRevealed: boolean;
     revealedAt: string | null;
     isRegistered: boolean;
+    deviceSummary?: string;
+    deviceIp?: string;
+    deviceBoundAt?: string;
+    deviceHasRevealed?: boolean;
+    deviceRevealedAt?: string | null;
   }[];
 }
 
@@ -880,6 +896,9 @@ export async function getAdminSafeState(): Promise<AdminSafeState> {
       ? "Vercel Private Blob (Encrypted)"
       : "Local Filesystem (Encrypted JSON)";
 
+  const devices = await getAllDeviceBindings();
+  const deviceByParticipantId = new Map(devices.map((d) => [d.participantId, d]));
+
   return {
     status: state.status,
     version: state.version || 7,
@@ -899,13 +918,24 @@ export async function getAdminSafeState(): Promise<AdminSafeState> {
       lastBackupName,
     },
     auditLogs,
-    participants: state.participants.map((p) => ({
-      id: p.id,
-      name: p.name,
-      isRevealed: Boolean(p.isRevealed || revealedParticipantIds.has(p.id)),
-      revealedAt: p.revealedAt,
-      isRegistered: Boolean(p.pinHash || registeredParticipantIds.has(p.id)),
-    })),
+    devices,
+    participants: state.participants.map((p) => {
+      const isRevealed = Boolean(p.isRevealed || revealedParticipantIds.has(p.id));
+      const isRegistered = Boolean(p.pinHash || registeredParticipantIds.has(p.id));
+      const boundDev = deviceByParticipantId.get(p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        isRevealed,
+        revealedAt: p.revealedAt || boundDev?.revealedAt || null,
+        isRegistered,
+        deviceSummary: boundDev?.summary,
+        deviceIp: boundDev?.ip,
+        deviceBoundAt: boundDev?.boundAt,
+        deviceHasRevealed: boundDev?.hasRevealed,
+        deviceRevealedAt: boundDev?.revealedAt,
+      };
+    }),
   };
 }
 
@@ -966,7 +996,8 @@ export async function getDeviceBinding(
 export async function bindDeviceToParticipant(
   deviceId: string,
   participantId: string,
-  participantName: string
+  participantName: string,
+  meta?: { ip?: string; userAgent?: string }
 ): Promise<{ success: boolean; error?: string }> {
   if (!deviceId || typeof deviceId !== "string") {
     return { success: false, error: "Invalid device identifier." };
@@ -982,12 +1013,24 @@ export async function bindDeviceToParticipant(
     };
   }
 
+  const parsed = parseUserAgentDetails(meta?.userAgent || existing?.userAgent);
+  const hasRevealed = Boolean(existing?.hasRevealed || revealedParticipantIds.has(participantId));
+  const revealedAt = existing?.revealedAt || null;
+
   const record: DeviceBindingRecord = {
     deviceId: cleanId,
     participantId,
     participantName,
     boundAt: existing?.boundAt || new Date().toISOString(),
     lastUsedAt: new Date().toISOString(),
+    ip: meta?.ip || existing?.ip || "unknown",
+    userAgent: meta?.userAgent || existing?.userAgent || "",
+    deviceModel: parsed.deviceModel !== "Unknown Device" ? parsed.deviceModel : existing?.deviceModel || "Unknown Device",
+    os: parsed.os !== "Unknown OS" ? parsed.os : existing?.os || "Unknown OS",
+    browser: parsed.browser !== "Unknown Browser" ? parsed.browser : existing?.browser || "Web Browser",
+    summary: parsed.summary !== "Unknown Device" ? parsed.summary : existing?.summary || "Unknown Device",
+    hasRevealed,
+    revealedAt,
   };
 
   // Update in-memory cache
@@ -1179,6 +1222,141 @@ export async function recordAdminAuditLog(
   }
 
   return fullEntry;
+}
+
+/**
+ * Records that a bound device performed a gift reveal operation.
+ */
+export async function recordDeviceReveal(
+  deviceId: string,
+  participantId: string,
+  meta?: { ip?: string; userAgent?: string }
+): Promise<{ success: boolean }> {
+  if (!deviceId || typeof deviceId !== "string") {
+    return { success: false };
+  }
+  const cleanId = deviceId.trim().toLowerCase();
+  const existing = await getDeviceBinding(cleanId);
+  const now = new Date().toISOString();
+
+  let participantName = existing?.participantName || "";
+  if (!participantName) {
+    const state = await getEventState();
+    const p = state.participants.find((x) => x.id === participantId);
+    if (p) participantName = p.name;
+  }
+
+  const parsed = parseUserAgentDetails(meta?.userAgent || existing?.userAgent);
+
+  const updated: DeviceBindingRecord = {
+    deviceId: cleanId,
+    participantId,
+    participantName,
+    boundAt: existing?.boundAt || now,
+    lastUsedAt: now,
+    ip: meta?.ip || existing?.ip || "unknown",
+    userAgent: meta?.userAgent || existing?.userAgent || "",
+    deviceModel: parsed.deviceModel !== "Unknown Device" ? parsed.deviceModel : existing?.deviceModel || "Unknown Device",
+    os: parsed.os !== "Unknown OS" ? parsed.os : existing?.os || "Unknown OS",
+    browser: parsed.browser !== "Unknown Browser" ? parsed.browser : existing?.browser || "Web Browser",
+    summary: parsed.summary !== "Unknown Device" ? parsed.summary : existing?.summary || "Unknown Device",
+    hasRevealed: true,
+    revealedAt: existing?.revealedAt || now,
+  };
+
+  deviceBindingCache.set(cleanId, updated);
+  const serialized = JSON.stringify(updated, null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(`v7/devices/${cleanId}.json`, serialized, {
+        access: "private",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.warn("Notice saving revealed device binding to blob:", err);
+    }
+  }
+
+  try {
+    const dir = getLocalDeviceDir();
+    const filePath = path.join(dir, `${cleanId}.json`);
+    fs.writeFileSync(filePath, serialized, "utf-8");
+  } catch {
+    // ignore
+  }
+
+  // Record audit log for reveal activity (Zero-Knowledge: strictly omits recipient name!)
+  await recordAdminAuditLog({
+    action: "GIFT_REVEALED",
+    actionLabel: "Gift Revealed by Participant",
+    ip: meta?.ip || "unknown",
+    status: "SUCCESS",
+    details: `${participantName} opened their gift using ${updated.summary} (IP: ${updated.ip})`,
+  });
+
+  return { success: true };
+}
+
+/**
+ * Retrieves all registered device binding records with telemetry.
+ */
+export async function getAllDeviceBindings(): Promise<DeviceBindingRecord[]> {
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const listRes = await list({
+        prefix: "v7/devices/",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+      for (const blob of listRes.blobs) {
+        const idMatch = blob.pathname.match(/^v7\/devices\/(.+)\.json$/);
+        if (idMatch && !deviceBindingCache.has(idMatch[1])) {
+          try {
+            const res: any = await get(blob.url, {
+              access: "private",
+              token: process.env.BLOB_READ_WRITE_TOKEN,
+            });
+            if (res && res.stream) {
+              const text = await new Response(res.stream).text();
+              const rec = JSON.parse(text);
+              deviceBindingCache.set(rec.deviceId, rec);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+      for (const file of files) {
+        const devId = file.replace(/\.json$/, "");
+        if (!deviceBindingCache.has(devId)) {
+          try {
+            const text = fs.readFileSync(path.join(dir, file), "utf-8");
+            const rec = JSON.parse(text);
+            deviceBindingCache.set(rec.deviceId, rec);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return Array.from(deviceBindingCache.values()).sort(
+    (a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime()
+  );
 }
 
 export async function getRegisteredDevicesCount(): Promise<number> {

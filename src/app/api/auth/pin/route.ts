@@ -78,8 +78,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const userAgent = req.headers.get("user-agent") || "";
+
     // Bind this device to the authenticated participant authoritatively
-    await bindDeviceToParticipant(deviceId, participantId, result.participant?.name || "");
+    await bindDeviceToParticipant(deviceId, participantId, result.participant?.name || "", { ip, userAgent });
 
     // Successful authentication / registration: reset rate limiter
     resetRateLimit(rateLimitKey);

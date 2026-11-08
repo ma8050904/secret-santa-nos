@@ -22,8 +22,26 @@ import {
   Dices,
   LogOut,
   X,
+  Laptop,
+  Globe,
 } from "lucide-react";
 import { Snowfall } from "@/components/Snowfall";
+
+interface DeviceBindingRecord {
+  deviceId: string;
+  participantId: string;
+  participantName: string;
+  boundAt: string;
+  lastUsedAt: string;
+  ip?: string;
+  userAgent?: string;
+  deviceModel?: string;
+  os?: string;
+  browser?: string;
+  summary?: string;
+  hasRevealed?: boolean;
+  revealedAt?: string | null;
+}
 
 interface AdminParticipant {
   id: string;
@@ -31,6 +49,11 @@ interface AdminParticipant {
   isRevealed: boolean;
   revealedAt: string | null;
   isRegistered?: boolean;
+  deviceSummary?: string;
+  deviceIp?: string;
+  deviceBoundAt?: string;
+  deviceHasRevealed?: boolean;
+  deviceRevealedAt?: string | null;
 }
 
 interface AdminAuditLogEntry {
@@ -40,7 +63,8 @@ interface AdminAuditLogEntry {
     | "REROLL_SUBGROUP_20"
     | "RESET_ALL_DEVICES"
     | "ADMIN_LOGIN"
-    | "ADMIN_LOGIN_FAILED";
+    | "ADMIN_LOGIN_FAILED"
+    | "GIFT_REVEALED";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -67,6 +91,7 @@ interface AdminSafeState {
     lastBackupName?: string;
   };
   auditLogs: AdminAuditLogEntry[];
+  devices?: DeviceBindingRecord[];
   participants: AdminParticipant[];
 }
 
@@ -78,6 +103,8 @@ export default function AdminDashboardPage() {
 
   const [state, setState] = useState<AdminSafeState | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
+  const [deviceFilter, setDeviceFilter] = useState<"ALL" | "REVEALED" | "UNREVEALED">("ALL");
+  const [deviceSearch, setDeviceSearch] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
   const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
@@ -193,6 +220,25 @@ export default function AdminDashboardPage() {
     if (!q) return state.participants;
     return state.participants.filter((p) => p.name.toLowerCase().includes(q));
   }, [state, filterQuery]);
+
+  const filteredDevices = useMemo(() => {
+    if (!state?.devices) return [];
+    return state.devices.filter((dev) => {
+      const q = deviceSearch.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        dev.participantName.toLowerCase().includes(q) ||
+        (dev.summary && dev.summary.toLowerCase().includes(q)) ||
+        (dev.ip && dev.ip.toLowerCase().includes(q)) ||
+        dev.deviceId.toLowerCase().includes(q);
+
+      if (!matchesSearch) return false;
+
+      if (deviceFilter === "REVEALED") return dev.hasRevealed === true;
+      if (deviceFilter === "UNREVEALED") return !dev.hasRevealed;
+      return true;
+    });
+  }, [state?.devices, deviceSearch, deviceFilter]);
 
   return (
     <div className="relative min-h-screen bg-gradient-to-b from-[#05150d] via-[#092215] to-[#040f09] text-white selection:bg-amber-400 selection:text-slate-950">
@@ -500,16 +546,31 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* ===============================================================
-                3. DEVICE MANAGEMENT SECTION
+                3. DEVICE MANAGEMENT & REVEAL TELEMETRY SECTION
                =============================================================== */}
             <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
-              <div className="flex items-center gap-2.5 pb-4 border-b border-amber-500/20">
-                <Smartphone className="h-5 w-5 text-sky-400" />
-                <h3 className="font-serif text-lg font-bold text-white tracking-wide">
-                  Device Management
-                </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-amber-500/20 gap-3">
+                <div className="flex items-center gap-2.5">
+                  <Smartphone className="h-5 w-5 text-sky-400" />
+                  <div>
+                    <h3 className="font-serif text-lg font-bold text-white tracking-wide">
+                      Device Management & Reveal Telemetry
+                    </h3>
+                    <p className="text-xs text-sky-200/80">
+                      Real-time device tracking: Inspect bound devices, operating systems, IP addresses, and exact timestamps of participants who opened their gift.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-950/60 px-3 py-1 text-xs font-semibold text-sky-300">
+                    <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
+                    <span>{state.devices?.length || 0} Registered Devices</span>
+                  </span>
+                </div>
               </div>
 
+              {/* Reset Devices Action Box */}
               <div className="mt-6 rounded-2xl border border-sky-500/30 bg-gradient-to-b from-[#0a1820] to-[#040c11] p-5">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div>
@@ -537,6 +598,139 @@ export default function AdminDashboardPage() {
                     <span>Reset All Device Bindings</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Devices Table Header & Filters */}
+              <div className="mt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Laptop className="h-4 w-4 text-amber-400" />
+                  <h4 className="text-sm font-bold text-amber-200">
+                    Device Activity & Reveal Registry
+                  </h4>
+                  <span className="text-xs text-emerald-300/60 font-mono">
+                    ({filteredDevices.length} matching)
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                  {/* Status Filter Tabs */}
+                  <div className="flex rounded-xl border border-amber-500/25 bg-[#05170e] p-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setDeviceFilter("ALL")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
+                        deviceFilter === "ALL"
+                          ? "bg-amber-500 text-slate-950 font-bold shadow"
+                          : "text-emerald-200/70 hover:text-white"
+                      }`}
+                    >
+                      All ({state.devices?.length || 0})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeviceFilter("REVEALED")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                        deviceFilter === "REVEALED"
+                          ? "bg-emerald-500 text-slate-950 font-bold shadow"
+                          : "text-emerald-200/70 hover:text-white"
+                      }`}
+                    >
+                      <span>🎁 Opened ({state.devices?.filter((d) => d.hasRevealed).length || 0})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeviceFilter("UNREVEALED")}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                        deviceFilter === "UNREVEALED"
+                          ? "bg-amber-400 text-slate-950 font-bold shadow"
+                          : "text-emerald-200/70 hover:text-white"
+                      }`}
+                    >
+                      <span>⏳ Unopened ({state.devices?.filter((d) => !d.hasRevealed).length || 0})</span>
+                    </button>
+                  </div>
+
+                  {/* Device Search Filter */}
+                  <input
+                    type="text"
+                    value={deviceSearch}
+                    onChange={(e) => setDeviceSearch(e.target.value)}
+                    placeholder="Search device, name, IP..."
+                    className="w-full sm:w-56 rounded-xl border border-amber-500/30 bg-[#0a2618] px-3 py-1.5 text-xs text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Devices Telemetry Table */}
+              <div className="mt-4 overflow-x-auto rounded-2xl border border-amber-500/20 bg-[#05170e]">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-amber-500/20 text-amber-300">
+                      <th className="py-2.5 px-3 font-semibold uppercase">Participant</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">Device & Browser</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">Client IP</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">Gift Reveal Status</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">Reveal Time</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">First Bound</th>
+                      <th className="py-2.5 px-3 font-semibold uppercase">Device ID</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-950/60">
+                    {filteredDevices.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-xs text-emerald-300/60">
+                          {state.devices && state.devices.length > 0
+                            ? "No devices match your search filter."
+                            : "No devices connected yet. When participants log in or open gifts, their device details and timestamps will appear here automatically."}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredDevices.map((dev) => (
+                        <tr key={dev.deviceId} className="transition-colors hover:bg-emerald-950/30">
+                          <td className="py-3 px-3 font-medium text-white">
+                            <div className="flex items-center gap-2">
+                              <span className="text-base">👤</span>
+                              <span className="font-semibold text-sm">{dev.participantName}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="font-medium text-amber-200">
+                              {dev.summary || `${dev.deviceModel || "Device"} • ${dev.browser || "Browser"}`}
+                            </div>
+                            <div className="text-[10px] text-emerald-400/60 truncate max-w-xs" title={dev.userAgent}>
+                              {dev.os} • {dev.deviceModel}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[11px] text-emerald-300/80">
+                            {dev.ip || "unknown"}
+                          </td>
+                          <td className="py-3 px-3">
+                            {dev.hasRevealed ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-bold text-emerald-300">
+                                <span className="text-xs">🎁</span>
+                                <span>Revealed Gift</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300">
+                                <span>⏳</span>
+                                <span>Connected (Unopened)</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[11px] text-emerald-300/80">
+                            {dev.revealedAt ? new Date(dev.revealedAt).toLocaleString() : "—"}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[11px] text-emerald-300/60">
+                            {new Date(dev.boundAt).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[10px] text-emerald-400/50">
+                            {dev.deviceId.slice(0, 8)}...{dev.deviceId.slice(-4)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -700,6 +894,7 @@ export default function AdminDashboardPage() {
                   <thead>
                     <tr className="border-b border-amber-500/20 text-amber-300">
                       <th className="py-3 px-3 font-semibold uppercase">Participant</th>
+                      <th className="py-3 px-3 font-semibold uppercase">Device & Network</th>
                       <th className="py-3 px-3 font-semibold uppercase">PIN Registration</th>
                       <th className="py-3 px-3 font-semibold uppercase">Gift Reveal</th>
                       <th className="py-3 px-3 font-semibold uppercase">Reveal Timestamp</th>
@@ -714,6 +909,22 @@ export default function AdminDashboardPage() {
                               <span className="text-base">👤</span>
                               <span className="font-semibold text-sm">{p.name}</span>
                             </div>
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {p.deviceSummary ? (
+                              <div>
+                                <div className="text-xs font-semibold text-sky-200">
+                                  {p.deviceSummary}
+                                </div>
+                                <div className="text-[10px] text-sky-400/60 font-mono">
+                                  IP: {p.deviceIp || "unknown"}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-emerald-300/40 font-mono">
+                                — Not Connected
+                              </span>
+                            )}
                           </td>
                           <td className="py-3.5 px-3">
                             {p.isRegistered ? (
