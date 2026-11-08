@@ -95,12 +95,12 @@ const EXPECTED_55_NAMES = [
   "Zaid Al-Lataifeh",
   "Zaid Al-Louh",
   "Zeina Darawi",
-  "Diana 👩🏫🛘",
-  "Fadi 👨🏫📖",
-  "Njoud👩🏫📜",
-  "Amal 👩🔬",
+  "Diana 👩‍🏫🛘",
+  "Fadi 👨‍🏫📖",
+  "Njoud👩‍🏫📜",
+  "Amal 👩‍🔬",
   "Sahar 🧬",
-  "Mirna 👩🏫🇬🇧",
+  "Mirna 👩‍🏫🇬🇧",
   "Amjad🌏",
 ];
 
