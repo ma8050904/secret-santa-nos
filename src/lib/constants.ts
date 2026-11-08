@@ -55,6 +55,7 @@ export const PARTICIPANTS = [
   { id: "p53", name: "Sahar 🧬" },
   { id: "p54", name: "Mirna 👩‍🏫🇬🇧" },
   { id: "p55", name: "Amjad🌏" },
+  { id: "p56", name: "Ibrahim👨🏫🇬🇧" },
 ] as const;
 
 export type ParticipantId = (typeof PARTICIPANTS)[number]["id"];

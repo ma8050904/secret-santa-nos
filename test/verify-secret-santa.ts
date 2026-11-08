@@ -46,7 +46,7 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-const EXPECTED_55_NAMES = [
+const EXPECTED_56_NAMES = [
   "Elean Nshewat",
   "George Karkar",
   "George Shammas",
@@ -102,6 +102,7 @@ const EXPECTED_55_NAMES = [
   "Sahar 🧬",
   "Mirna 👩‍🏫🇬🇧",
   "Amjad🌏",
+  "Ibrahim👨🏫🇬🇧",
 ];
 
 async function runTests() {
@@ -120,31 +121,31 @@ async function runTests() {
   console.log("========================================================\n");
 
   // =========================================================================
-  // SUITE A: ROSTER INTEGRITY (55 Participants)
+  // SUITE A: ROSTER INTEGRITY (56 Participants)
   // =========================================================================
   console.log("--- A. Participant Roster Integrity ---");
-  assert(PARTICIPANTS.length === 55, "Exact participant count is 55");
+  assert(PARTICIPANTS.length === 56, "Exact participant count is 56");
 
   const actualNames = PARTICIPANTS.map((p) => p.name);
   const uniqueNames = new Set(actualNames);
-  assert(uniqueNames.size === 55, "All 55 participant names are unique");
+  assert(uniqueNames.size === 56, "All 56 participant names are unique");
 
-  const allNamesMatch = EXPECTED_55_NAMES.every((name, idx) => actualNames[idx] === name);
-  assert(allNamesMatch, "All 55 participant names match exact spelling and capitalization in order");
+  const allNamesMatch = EXPECTED_56_NAMES.every((name, idx) => actualNames[idx] === name);
+  assert(allNamesMatch, "All 56 participant names match exact spelling and capitalization in order");
 
   // =========================================================================
   // SUITE B: DRAW CONSTRAINTS & CRYPTOGRAPHIC STORAGE
   // =========================================================================
   console.log("\n--- B. Constrained Draw Integrity ---");
   const state = await getEventState();
-  assert(state.participants.length === 55, "Storage contains all 55 participants");
+  assert(state.participants.length === 56, "Storage contains all 56 participants");
   assert(state.status === "active", "Event draw remains in active status");
   assert(state.version === 7, "Event round version is 7");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
   );
-  assert(allHaveAssignments, "All 55 participants have valid encrypted assignments");
+  assert(allHaveAssignments, "All 56 participants have valid encrypted assignments");
 
   // Decrypt all assignments to test constraints
   const decryptedMap = new Map<string, string>();
@@ -154,9 +155,9 @@ async function runTests() {
   }
 
   // 1. Bijection check
-  assert(decryptedMap.size === 55, "Exactly 55 givers present in draw");
+  assert(decryptedMap.size === 56, "Exactly 56 givers present in draw");
   const recipientSet = new Set(decryptedMap.values());
-  assert(recipientSet.size === 55, "Exactly 55 unique recipients present in draw");
+  assert(recipientSet.size === 56, "Exactly 56 unique recipients present in draw");
 
   // 2. Zero self-assignments
   const selfAssignments = Array.from(decryptedMap.entries()).filter(([giver, rec]) => giver === rec);
@@ -197,7 +198,7 @@ async function runTests() {
       subCrossEdges++;
     }
   }
-  assert(subCrossEdges === 0, "Designated Subgroup is completely isolated (0 edges cross between 22-subgroup and remaining 33)");
+  assert(subCrossEdges === 0, `Designated Subgroup is completely isolated (0 edges cross between 22-subgroup and remaining ${PARTICIPANTS.length - SUBGROUP_20_IDS.length})`);
 
   // 7. Mohammad Shourati is in Subgroup and not self-assigned
   assert(shouratiRecipient !== "Mohammad Shourati", "Mohammad Shourati is not self-assigned");
@@ -307,27 +308,27 @@ async function runTests() {
   assert(verifySessionToken(tamperedToken, round7Secret) === null, "Tampered session token is rejected");
 
   // =========================================================================
-  // SUITE H: CONCURRENCY LOAD TEST (Simulating 55 concurrent participants)
+  // SUITE H: CONCURRENCY LOAD TEST (Simulating 56 concurrent participants)
   // =========================================================================
-  console.log("\n--- H. Concurrency Load Test (Simulating 55 Concurrent Users) ---");
+  console.log("\n--- H. Concurrency Load Test (Simulating 56 Concurrent Users) ---");
 
-  // 1. 55 Simultaneous directory read requests
-  console.log("  Testing 55 simultaneous directory read requests...");
+  // 1. 56 Simultaneous directory read requests
+  console.log("  Testing 56 simultaneous directory read requests...");
   const t0 = Date.now();
   const readResults = await Promise.all(
-    Array.from({ length: 55 }).map(async () => {
+    Array.from({ length: 56 }).map(async () => {
       const s = await getEventState();
-      return s.participants.length === 55;
+      return s.participants.length === 56;
     })
   );
   const readDuration = Date.now() - t0;
   assert(
     readResults.every(Boolean),
-    `All 55 simultaneous read requests succeeded (${readDuration}ms total)`
+    `All 56 simultaneous read requests succeeded (${readDuration}ms total)`
   );
 
-  // 2. 53 Simultaneous first-time PIN registrations (p3 through p55)
-  console.log("  Testing 53 simultaneous independent PIN registrations...");
+  // 2. 54 Simultaneous first-time PIN registrations (p3 through p56)
+  console.log("  Testing 54 simultaneous independent PIN registrations...");
   const registrationPromises = state.participants.slice(2).map(async (p, idx) => {
     const pin = `1000${idx + 3}`;
     const res = await authenticateOrRegisterPin(p.id, pin);
@@ -336,10 +337,10 @@ async function runTests() {
 
   const regResults = await Promise.all(registrationPromises);
   const allRegSuccess = regResults.every((r) => r.success && r.isNew);
-  assert(allRegSuccess, "All 53 concurrent PIN registrations succeeded with zero lost updates");
+  assert(allRegSuccess, "All 54 concurrent PIN registrations succeeded with zero lost updates");
 
-  // 3. 53 Simultaneous reveals across all participants
-  console.log("  Testing 53 simultaneous independent reveal operations...");
+  // 3. 54 Simultaneous reveals across all participants
+  console.log("  Testing 54 simultaneous independent reveal operations...");
   const revealPromises = state.participants.slice(2).map(async (p, idx) => {
     const pin = `1000${idx + 3}`;
     const res = await revealRecipientWithPin(p.id, pin);
@@ -353,9 +354,9 @@ async function runTests() {
 
   const revResults = await Promise.all(revealPromises);
   const allRevSuccess = revResults.every((r) => r.success && r.hasRecipient);
-  assert(allRevSuccess, "All 53 concurrent reveal operations succeeded with zero errors");
+  assert(allRevSuccess, "All 54 concurrent reveal operations succeeded with zero errors");
 
-  // Verify that all 55 recipients match the original decrypted draw exactly
+  // Verify that all 56 recipients match the original decrypted draw exactly
   let assignmentsIntact = true;
   for (const r of revResults) {
     const expected = decryptedMap.get(state.participants.find((p) => p.id === r.id)!.name);
@@ -380,9 +381,9 @@ async function runTests() {
   // =========================================================================
   console.log("\n--- I. Organizer-Blind Privacy Audit ---");
   const adminState = await getAdminSafeState();
-  assert(adminState.totalParticipants === 55, "Organizer sees exactly 55 participants");
-  assert(adminState.registeredCount === 55, "All 55 participants tracked as registered");
-  assert(adminState.revealedCount === 55, "All 55 participants tracked as revealed");
+  assert(adminState.totalParticipants === 56, "Organizer sees exactly 56 participants");
+  assert(adminState.registeredCount === 56, "All 56 participants tracked as registered");
+  assert(adminState.revealedCount === 56, "All 56 participants tracked as revealed");
 
   // Strictly verify privacy: no PINs, salts, or recipients in admin state
   const leakedData = adminState.participants.some(
@@ -534,11 +535,11 @@ async function runTests() {
   const postRecoveryBinding = await getDeviceBinding(devA);
   assert(postRecoveryBinding === null, "Device A binding is safely cleared after recovery");
 
-  // 7. Verify all 55 assignments in storage remain 100% byte-for-byte intact
+  // 7. Verify all 56 assignments in storage remain 100% byte-for-byte intact
   const finalState = await getEventState();
   assert(finalState.version === 7, "Event state version is still Round 7");
-  assert(finalState.participants.length === 55, "Event participant roster count remains exactly 55");
-  assert(finalState.participants.every((p) => p.encryptedRecipient), "All 55 Secret Santa assignments remain byte-for-byte intact");
+  assert(finalState.participants.length === 56, "Event participant roster count remains exactly 56");
+  assert(finalState.participants.every((p) => p.encryptedRecipient), "All 56 Secret Santa assignments remain byte-for-byte intact");
 
   // =========================================================================
   // SUMMARY
