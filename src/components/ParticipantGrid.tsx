@@ -118,13 +118,18 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           {filteredParticipants.map((p) => {
             const isSelected = selectedParticipantId === p.id;
-            const initials = (p.name || "")
-              .split(" ")
-              .filter(Boolean)
-              .map((n) => n[0])
-              .join("")
-              .substring(0, 2)
-              .toUpperCase();
+            const cleanWords = (p.name || "")
+              .replace(/[^\p{L}\s]/gu, "")
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean);
+
+            const initials =
+              cleanWords.length >= 2
+                ? (cleanWords[0][0] + cleanWords[1][0]).toUpperCase()
+                : cleanWords.length === 1
+                ? cleanWords[0][0].toUpperCase()
+                : (p.name || "").trim().slice(0, 1).toUpperCase();
 
             return (
               <button
