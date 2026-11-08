@@ -48,6 +48,13 @@ export const PARTICIPANTS = [
   { id: "p46", name: "Zaid Al-Lataifeh" },
   { id: "p47", name: "Zaid Al-Louh" },
   { id: "p48", name: "Zeina Darawi" },
+  { id: "p49", name: "Diana 👩🏫🛘" },
+  { id: "p50", name: "Fadi 👨🏫📖" },
+  { id: "p51", name: "Njoud👩🏫📜" },
+  { id: "p52", name: "Amal 👩🔬" },
+  { id: "p53", name: "Sahar 🧬" },
+  { id: "p54", name: "Mirna 👩🏫🇬🇧" },
+  { id: "p55", name: "Amjad🌏" },
 ] as const;
 
 export type ParticipantId = (typeof PARTICIPANTS)[number]["id"];

@@ -18,10 +18,13 @@ import {
   generateSubgroup20Pairs,
   validateConstrainedSecretSantaDraw,
   SUBGROUP_20_ID_SET,
+  SUBGROUP_20_IDS,
   MANDATORY_RECIPROCAL_A,
   MANDATORY_RECIPROCAL_B,
   FORBIDDEN_EXCLUSION_A,
   FORBIDDEN_EXCLUSION_B,
+  FORBIDDEN_EXCLUSION_C,
+  FORBIDDEN_EXCLUSION_D,
   AssignmentPair,
 } from "./derangement";
 
@@ -1475,17 +1478,18 @@ export async function rerollSubgroup20(
     // ignore
   }
 
-  // 2. Extract and preserve the 28 participants' assignments outside Subgroup 20
-  const preserved28Pairs: AssignmentPair[] = [];
-  const participants28 = state.participants.filter(
+  // 2. Extract and preserve participants' assignments outside the designated subgroup
+  const preservedOutsidePairs: AssignmentPair[] = [];
+  const participantsOutside = state.participants.filter(
     (p) => !SUBGROUP_20_ID_SET.has(p.id as any)
   );
 
-  if (participants28.length !== 28) {
-    throw new Error(`Expected 28 participants outside Subgroup 20, found ${participants28.length}`);
+  const expectedOutsideCount = PARTICIPANTS.length - SUBGROUP_20_IDS.length;
+  if (participantsOutside.length !== expectedOutsideCount) {
+    throw new Error(`Expected ${expectedOutsideCount} participants outside designated subgroup, found ${participantsOutside.length}`);
   }
 
-  for (const p of participants28) {
+  for (const p of participantsOutside) {
     if (!p.encryptedRecipient) {
       throw new Error(`Participant ${p.name} missing encrypted recipient`);
     }
@@ -1494,7 +1498,7 @@ export async function rerollSubgroup20(
     if (!recP) {
       throw new Error(`Failed to resolve recipient for ${p.name}`);
     }
-    preserved28Pairs.push({
+    preservedOutsidePairs.push({
       giverId: p.id,
       giverName: p.name,
       recipientId: recP.id,
@@ -1502,21 +1506,21 @@ export async function rerollSubgroup20(
     });
   }
 
-  // 3. Generate fresh randomized pairs for Subgroup 20
-  const subgroup20Participants = PARTICIPANTS.filter((p) => SUBGROUP_20_ID_SET.has(p.id as any));
-  const newSubgroup20Pairs = generateSubgroup20Pairs(subgroup20Participants);
+  // 3. Generate fresh randomized pairs for the designated subgroup
+  const subgroupParticipants = PARTICIPANTS.filter((p) => SUBGROUP_20_ID_SET.has(p.id as any));
+  const newSubgroupPairs = generateSubgroup20Pairs(subgroupParticipants);
 
-  // 4. Combine and validate all 48 assignments
-  const all48Assignments: AssignmentPair[] = [...newSubgroup20Pairs, ...preserved28Pairs];
+  // 4. Combine and validate all assignments
+  const allAssignments: AssignmentPair[] = [...newSubgroupPairs, ...preservedOutsidePairs];
 
-  const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, all48Assignments);
+  const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, allAssignments);
   if (!validation.valid) {
     throw new Error(`Draw validation failed: ${validation.reason}`);
   }
 
   // Check reciprocal Ghazal ⇄ George
   const map = new Map<string, string>();
-  for (const a of all48Assignments) {
+  for (const a of allAssignments) {
     map.set(a.giverName, a.recipientName);
   }
   if (
@@ -1529,7 +1533,13 @@ export async function rerollSubgroup20(
     map.get(FORBIDDEN_EXCLUSION_A) === FORBIDDEN_EXCLUSION_B ||
     map.get(FORBIDDEN_EXCLUSION_B) === FORBIDDEN_EXCLUSION_A
   ) {
-    throw new Error("Mutual exclusion validation failed!");
+    throw new Error("Mutual exclusion validation failed for Zeina and Hamza!");
+  }
+  if (
+    map.get(FORBIDDEN_EXCLUSION_C) === FORBIDDEN_EXCLUSION_D ||
+    map.get(FORBIDDEN_EXCLUSION_D) === FORBIDDEN_EXCLUSION_C
+  ) {
+    throw new Error("Mutual exclusion validation failed for Raghad and Mohammad!");
   }
 
   // 5. Encrypt with new masterSalt
@@ -1537,7 +1547,7 @@ export async function rerollSubgroup20(
   const newVersion = (state.version || 7) + 1;
 
   const newParticipantsState = PARTICIPANTS.map((p) => {
-    const pair = all48Assignments.find((a) => a.giverId === p.id)!;
+    const pair = allAssignments.find((a) => a.giverId === p.id)!;
     const code = generateChristmasPasscode();
     const codeHash = hashPasscode(code, newMasterSalt);
     const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
@@ -1637,7 +1647,7 @@ export async function regenerateFullDraw(
     // ignore
   }
 
-  // 2. Generate constrained draw for all 48 participants
+  // 2. Generate constrained draw for all participants
   const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
 
   const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
@@ -1703,12 +1713,12 @@ export async function regenerateFullDraw(
     actionLabel: "Regenerate Full Draw",
     ip: clientIp,
     status: "SUCCESS",
-    details: `Full draw regenerated for 48 participants. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
+    details: `Full draw regenerated for ${PARTICIPANTS.length} participants. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
   });
 
   return {
     success: true,
-    message: `Full draw successfully regenerated for all 48 participants. New Round ${newVersion} is now active.`,
+    message: `Full draw successfully regenerated for all ${PARTICIPANTS.length} participants. New Round ${newVersion} is now active.`,
     version: newVersion,
     backupBlobKey,
   };

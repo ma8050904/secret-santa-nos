@@ -45,11 +45,11 @@ async function run() {
 
   // 1. Verify 48-person roster
   console.log("Step 1: Verifying 48-person roster...");
-  if (PARTICIPANTS.length !== 48) {
+  if ((PARTICIPANTS.length as number) !== 48) {
     throw new Error(`Expected exactly 48 participants, found ${PARTICIPANTS.length}`);
   }
   const uniqueNames = new Set(PARTICIPANTS.map((p) => p.name));
-  if (uniqueNames.size !== 48) {
+  if (uniqueNames.size !== (PARTICIPANTS.length as number)) {
     throw new Error("Participant names are not strictly unique!");
   }
   console.log("  ✅ Roster verified: exactly 48 unique participants in correct order.\n");

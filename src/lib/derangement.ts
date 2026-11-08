@@ -17,8 +17,10 @@ export const MANDATORY_RECIPROCAL_A = "Ghazal Baqleh";
 export const MANDATORY_RECIPROCAL_B = "George Karkar";
 export const FORBIDDEN_EXCLUSION_A = "Zeina Darawi";
 export const FORBIDDEN_EXCLUSION_B = "Hamza Darawi";
+export const FORBIDDEN_EXCLUSION_C = "Raghad Al-Shobaki";
+export const FORBIDDEN_EXCLUSION_D = "Mohammad Shourati";
 
-// Canonical 20-Person Subgroup
+// Canonical Designated Subgroup (Formerly 20, now 22 with Diana and Raghad)
 export const SUBGROUP_20_IDS = [
   "p34", // Qais Al-Hadeed
   "p28", // Mohammad Shourati
@@ -40,6 +42,8 @@ export const SUBGROUP_20_IDS = [
   "p26", // Michael Shamma
   "p40", // Toleen Awwad
   "p14", // Joseph Dababneh
+  "p35", // Raghad Al-Shobaki
+  "p49", // Diana 👩🏫🛘
 ] as const;
 
 export const SUBGROUP_20_ID_SET = new Set<string>(SUBGROUP_20_IDS);
@@ -129,8 +133,8 @@ export function validateConstrainedSecretSantaDraw(
     map.set(a.giverName, a.recipientName);
   }
 
-  // 1. Check Subgroup 20 isolation if full 48-roster is present
-  if (participants.length === 48) {
+  // 1. Check Subgroup isolation if full roster is present
+  if (participants.length > SUBGROUP_20_IDS.length) {
     for (const a of assignments) {
       const giverInSub20 = SUBGROUP_20_ID_SET.has(a.giverId);
       const recipientInSub20 = SUBGROUP_20_ID_SET.has(a.recipientId);
@@ -138,13 +142,13 @@ export function validateConstrainedSecretSantaDraw(
       if (giverInSub20 && !recipientInSub20) {
         return {
           valid: false,
-          reason: `Subgroup 20 isolation violation: ${a.giverName} (in Subgroup 20) gave to ${a.recipientName} (outside Subgroup 20)`,
+          reason: `Subgroup isolation violation: ${a.giverName} (in designated subgroup) gave to ${a.recipientName} (outside designated subgroup)`,
         };
       }
       if (!giverInSub20 && recipientInSub20) {
         return {
           valid: false,
-          reason: `Subgroup 20 isolation violation: ${a.giverName} (outside Subgroup 20) gave to ${a.recipientName} (inside Subgroup 20)`,
+          reason: `Subgroup isolation violation: ${a.giverName} (outside designated subgroup) gave to ${a.recipientName} (inside designated subgroup)`,
         };
       }
     }
@@ -164,7 +168,7 @@ export function validateConstrainedSecretSantaDraw(
     };
   }
 
-  // 3. Mandatory exclusion constraint
+  // 3. Mandatory exclusion constraint 1: Zeina ⇎ Hamza
   if (map.get(FORBIDDEN_EXCLUSION_A) === FORBIDDEN_EXCLUSION_B) {
     return {
       valid: false,
@@ -175,6 +179,20 @@ export function validateConstrainedSecretSantaDraw(
     return {
       valid: false,
       reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_B} cannot be assigned to ${FORBIDDEN_EXCLUSION_A}`,
+    };
+  }
+
+  // 4. Mandatory exclusion constraint 2: Raghad ⇎ Mohammad Shourati
+  if (map.get(FORBIDDEN_EXCLUSION_C) === FORBIDDEN_EXCLUSION_D) {
+    return {
+      valid: false,
+      reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_C} cannot be assigned to ${FORBIDDEN_EXCLUSION_D}`,
+    };
+  }
+  if (map.get(FORBIDDEN_EXCLUSION_D) === FORBIDDEN_EXCLUSION_C) {
+    return {
+      valid: false,
+      reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_D} cannot be assigned to ${FORBIDDEN_EXCLUSION_C}`,
     };
   }
 
@@ -295,6 +313,15 @@ export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]
         break;
       }
 
+      // Check exclusion constraint: Raghad <-> Mohammad Shourati
+      if (
+        (giver.name === FORBIDDEN_EXCLUSION_C && recipient.name === FORBIDDEN_EXCLUSION_D) ||
+        (giver.name === FORBIDDEN_EXCLUSION_D && recipient.name === FORBIDDEN_EXCLUSION_C)
+      ) {
+        hasViolation = true;
+        break;
+      }
+
       pairs.push({
         giverId: giver.id,
         giverName: giver.name,
@@ -365,13 +392,13 @@ function generateDerangementCyclePairs(participants: readonly ParticipantItem[])
 export function generateConstrainedSecretSantaDraw(
   participants: readonly ParticipantItem[]
 ): AssignmentPair[] {
-  if (participants.length === 48) {
-    const sub20 = participants.filter((p) => SUBGROUP_20_ID_SET.has(p.id));
-    const rem28 = participants.filter((p) => !SUBGROUP_20_ID_SET.has(p.id));
+  if (participants.length > SUBGROUP_20_IDS.length) {
+    const sub = participants.filter((p) => SUBGROUP_20_ID_SET.has(p.id));
+    const rem = participants.filter((p) => !SUBGROUP_20_ID_SET.has(p.id));
 
-    if (sub20.length !== 20 || rem28.length !== 28) {
+    if (sub.length !== SUBGROUP_20_IDS.length) {
       throw new Error(
-        `Roster partition mismatch: expected 20 in sub20 (got ${sub20.length}) and 28 in rem28 (got ${rem28.length})`
+        `Roster partition mismatch: expected ${SUBGROUP_20_IDS.length} in designated subgroup (got ${sub.length}) and ${participants.length - SUBGROUP_20_IDS.length} in remaining (got ${rem.length})`
       );
     }
 
@@ -380,9 +407,9 @@ export function generateConstrainedSecretSantaDraw(
 
     while (attempts < maxAttempts) {
       attempts++;
-      const draw20 = generateSubgroup20Pairs(sub20);
-      const draw28 = generateDerangementCyclePairs(rem28);
-      const combined = [...draw20, ...draw28];
+      const drawSub = generateSubgroup20Pairs(sub);
+      const drawRem = generateDerangementCyclePairs(rem);
+      const combined = [...drawSub, ...drawRem];
 
       const validation = validateConstrainedSecretSantaDraw(participants, combined);
       if (validation.valid) {
@@ -393,6 +420,6 @@ export function generateConstrainedSecretSantaDraw(
     throw new Error(`Failed to generate partitioned Secret Santa draw after ${maxAttempts} attempts.`);
   }
 
-  // If already filtered to sub20
+  // If already filtered to designated subgroup
   return generateSubgroup20Pairs(participants);
 }

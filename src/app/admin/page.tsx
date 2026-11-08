@@ -423,7 +423,7 @@ export default function AdminDashboardPage() {
                 <p className="mt-2 text-3xl sm:text-4xl font-extrabold text-white">
                   {state.totalParticipants}
                 </p>
-                <p className="mt-1 text-[11px] text-emerald-300/70">Verified 48-member roster</p>
+                <p className="mt-1 text-[11px] text-emerald-300/70">Verified {state.totalParticipants}-member roster</p>
               </div>
 
               {/* Card 2: Current Round (Read dynamically from production) */}
@@ -498,7 +498,7 @@ export default function AdminDashboardPage() {
                       Regenerate the draw for all participants while strictly preserving all current rules.
                     </p>
                     <p className="mt-2 text-[11px] text-red-300/60 leading-normal">
-                      Creates an automatic backup. Regenerates assignments for all 48 participants while preserving Subgroups 1 & 2 partitions, Ghazal ⇄ George, and Zeina ⇎ Hamza constraints.
+                      Creates an automatic backup. Regenerates assignments for all {state.totalParticipants} participants while preserving Subgroups 1 & 2 partitions, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad constraints.
                     </p>
                   </div>
 
@@ -513,22 +513,22 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
 
-                {/* Action 2: Reroll 20-Person Group */}
+                {/* Action 2: Reroll Subgroup */}
                 <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-b from-[#18150a] to-[#0d0b04] p-5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="font-serif text-base font-bold text-white">
-                        Reroll 20-Person Group
+                        Reroll Designated Subgroup
                       </h4>
                       <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-950/80 px-2.5 py-0.5 text-[10px] font-bold text-amber-300 uppercase tracking-wider">
                         Subgroup Re-randomization
                       </span>
                     </div>
                     <p className="text-xs text-amber-200/90 leading-relaxed">
-                      Reroll the specified subgroup only, leaving the assignments of the other 28 unchanged.
+                      Reroll the designated 22-person group only, leaving the assignments of the other participants unchanged.
                     </p>
                     <p className="mt-2 text-[11px] text-amber-300/60 leading-normal">
-                      Creates an automatic backup. Rerolls the 20-person closed group with mandatory constraints while preserving the other 28 assignments byte-for-byte.
+                      Creates an automatic backup. Rerolls the closed subgroup with all mandatory constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad) while preserving the other assignments byte-for-byte.
                     </p>
                   </div>
 
@@ -538,7 +538,7 @@ export default function AdminDashboardPage() {
                       className="flex items-center gap-2 rounded-xl border border-amber-500/50 bg-amber-600 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg transition-all hover:bg-amber-500 hover:scale-[1.02] cursor-pointer"
                     >
                       <Dices className="h-3.5 w-3.5" />
-                      <span>Reroll 20-Person Group</span>
+                      <span>Reroll Designated Subgroup</span>
                     </button>
                   </div>
                 </div>
@@ -993,7 +993,7 @@ export default function AdminDashboardPage() {
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
                     <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
-                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all 48 participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, and Zeina ⇎ Hamza).</p>
+                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 55} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
                     <p>• <strong>Round Reset:</strong> Starts a new round with an incremented version number; reveals reset to 0 so participants can set a fresh PIN.</p>
                   </div>
 
@@ -1037,16 +1037,16 @@ export default function AdminDashboardPage() {
                     </div>
                     <div>
                       <h3 className="font-serif text-lg font-bold text-white">
-                        Confirm 20-Person Subgroup Reroll
+                        Confirm Designated Subgroup Reroll
                       </h3>
-                      <p className="text-xs text-amber-300/80">Assignments for the other 28 participants remain untouched</p>
+                      <p className="text-xs text-amber-300/80">Assignments for participants outside this subgroup remain untouched</p>
                     </div>
                   </div>
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
                     <p>• <strong>Automatic Backup:</strong> An immediate, complete backup of the current state is stored before changes.</p>
-                    <p>• <strong>Designated Group Only:</strong> Only the 20 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza).</p>
-                    <p>• <strong>Preservation of 28:</strong> Assignments for the remaining 28 participants remain 100% byte-for-byte identical.</p>
+                    <p>• <strong>Designated Group Only:</strong> Only the 22 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad).</p>
+                    <p>• <strong>Preservation:</strong> Assignments for all other participants remain 100% byte-for-byte identical.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">

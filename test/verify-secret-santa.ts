@@ -9,6 +9,8 @@ import {
   MANDATORY_RECIPROCAL_B,
   FORBIDDEN_EXCLUSION_A,
   FORBIDDEN_EXCLUSION_B,
+  FORBIDDEN_EXCLUSION_C,
+  FORBIDDEN_EXCLUSION_D,
   SUBGROUP_20_IDS,
   SUBGROUP_20_ID_SET,
 } from "../src/lib/derangement";
@@ -44,7 +46,7 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-const EXPECTED_48_NAMES = [
+const EXPECTED_55_NAMES = [
   "Elean Nshewat",
   "George Karkar",
   "George Shammas",
@@ -93,6 +95,13 @@ const EXPECTED_48_NAMES = [
   "Zaid Al-Lataifeh",
   "Zaid Al-Louh",
   "Zeina Darawi",
+  "Diana 👩🏫🛘",
+  "Fadi 👨🏫📖",
+  "Njoud👩🏫📜",
+  "Amal 👩🔬",
+  "Sahar 🧬",
+  "Mirna 👩🏫🇬🇧",
+  "Amjad🌏",
 ];
 
 async function runTests() {
@@ -111,31 +120,31 @@ async function runTests() {
   console.log("========================================================\n");
 
   // =========================================================================
-  // SUITE A: ROSTER INTEGRITY (48 Participants)
+  // SUITE A: ROSTER INTEGRITY (55 Participants)
   // =========================================================================
   console.log("--- A. Participant Roster Integrity ---");
-  assert(PARTICIPANTS.length === 48, "Exact participant count is 48");
+  assert(PARTICIPANTS.length === 55, "Exact participant count is 55");
 
   const actualNames = PARTICIPANTS.map((p) => p.name);
   const uniqueNames = new Set(actualNames);
-  assert(uniqueNames.size === 48, "All 48 participant names are unique");
+  assert(uniqueNames.size === 55, "All 55 participant names are unique");
 
-  const allNamesMatch = EXPECTED_48_NAMES.every((name, idx) => actualNames[idx] === name);
-  assert(allNamesMatch, "All 48 participant names match exact spelling and capitalization in order");
+  const allNamesMatch = EXPECTED_55_NAMES.every((name, idx) => actualNames[idx] === name);
+  assert(allNamesMatch, "All 55 participant names match exact spelling and capitalization in order");
 
   // =========================================================================
   // SUITE B: DRAW CONSTRAINTS & CRYPTOGRAPHIC STORAGE
   // =========================================================================
   console.log("\n--- B. Constrained Draw Integrity ---");
   const state = await getEventState();
-  assert(state.participants.length === 48, "Storage contains all 48 participants");
+  assert(state.participants.length === 55, "Storage contains all 55 participants");
   assert(state.status === "active", "Event draw remains in active status");
   assert(state.version === 7, "Event round version is 7");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
   );
-  assert(allHaveAssignments, "All 48 participants have valid encrypted assignments");
+  assert(allHaveAssignments, "All 55 participants have valid encrypted assignments");
 
   // Decrypt all assignments to test constraints
   const decryptedMap = new Map<string, string>();
@@ -145,9 +154,9 @@ async function runTests() {
   }
 
   // 1. Bijection check
-  assert(decryptedMap.size === 48, "Exactly 48 givers present in draw");
+  assert(decryptedMap.size === 55, "Exactly 55 givers present in draw");
   const recipientSet = new Set(decryptedMap.values());
-  assert(recipientSet.size === 48, "Exactly 48 unique recipients present in draw");
+  assert(recipientSet.size === 55, "Exactly 55 unique recipients present in draw");
 
   // 2. Zero self-assignments
   const selfAssignments = Array.from(decryptedMap.entries()).filter(([giver, rec]) => giver === rec);
@@ -161,7 +170,7 @@ async function runTests() {
     `Mandatory reciprocal assignment verified: ${MANDATORY_RECIPROCAL_A} ⇄ ${MANDATORY_RECIPROCAL_B}`
   );
 
-  // 4. Mandatory exclusion: Zeina Darawi <-> Hamza Darawi
+  // 4. Mandatory exclusion 1: Zeina Darawi <-> Hamza Darawi
   const zeinaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_A);
   const hamzaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_B);
   assert(
@@ -169,24 +178,31 @@ async function runTests() {
     `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_A} and ${FORBIDDEN_EXCLUSION_B} are NOT assigned to each other`
   );
 
-  // 5. Mandatory Subgroup 20 Isolation
-  let sub20CrossEdges = 0;
+  // 5. Mandatory exclusion 2: Raghad Al-Shobaki <-> Mohammad Shourati
+  const raghadRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_C);
+  const shouratiRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_D);
+  assert(
+    raghadRecipient !== FORBIDDEN_EXCLUSION_D && shouratiRecipient !== FORBIDDEN_EXCLUSION_C,
+    `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_C} and ${FORBIDDEN_EXCLUSION_D} are NOT assigned to each other`
+  );
+
+  // 6. Mandatory Subgroup Isolation (22 members in subgroup 1, 33 members in subgroup 2)
+  let subCrossEdges = 0;
   for (const [giver, rec] of decryptedMap.entries()) {
     const giverP = state.participants.find((p) => p.name === giver)!;
     const recP = state.participants.find((p) => p.name === rec)!;
-    const giverInSub20 = SUBGROUP_20_ID_SET.has(giverP.id);
-    const recInSub20 = SUBGROUP_20_ID_SET.has(recP.id);
-    if ((giverInSub20 && !recInSub20) || (!giverInSub20 && recInSub20)) {
-      sub20CrossEdges++;
+    const giverInSub = SUBGROUP_20_ID_SET.has(giverP.id);
+    const recInSub = SUBGROUP_20_ID_SET.has(recP.id);
+    if ((giverInSub && !recInSub) || (!giverInSub && recInSub)) {
+      subCrossEdges++;
     }
   }
-  assert(sub20CrossEdges === 0, "Subgroup 20 is completely isolated (0 edges cross between 20-subgroup and remaining 28)");
+  assert(subCrossEdges === 0, "Designated Subgroup is completely isolated (0 edges cross between 22-subgroup and remaining 33)");
 
-  // 6. Mohammad Shourati is in Subgroup 20 and not self-assigned
-  const shouratiRecipient = decryptedMap.get("Mohammad Shourati");
+  // 7. Mohammad Shourati is in Subgroup and not self-assigned
   assert(shouratiRecipient !== "Mohammad Shourati", "Mohammad Shourati is not self-assigned");
-  const shouratiP = state.participants.find((p) => p.name === shouratiRecipient)!;
-  assert(SUBGROUP_20_ID_SET.has(shouratiP.id), "Mohammad Shourati receives from and gives to Subgroup 20");
+  const shouratiRecP = state.participants.find((p) => p.name === shouratiRecipient)!;
+  assert(SUBGROUP_20_ID_SET.has(shouratiRecP.id), "Mohammad Shourati receives from and gives to designated Subgroup");
 
   // =========================================================================
   // SUITE C: CRYPTOGRAPHIC PIN HASHING & SALT SECURITY
@@ -291,27 +307,27 @@ async function runTests() {
   assert(verifySessionToken(tamperedToken, round7Secret) === null, "Tampered session token is rejected");
 
   // =========================================================================
-  // SUITE H: CONCURRENCY LOAD TEST (Simulating 48 concurrent participants)
+  // SUITE H: CONCURRENCY LOAD TEST (Simulating 55 concurrent participants)
   // =========================================================================
-  console.log("\n--- H. Concurrency Load Test (Simulating 48 Concurrent Users) ---");
+  console.log("\n--- H. Concurrency Load Test (Simulating 55 Concurrent Users) ---");
 
-  // 1. 48 Simultaneous directory read requests
-  console.log("  Testing 48 simultaneous directory read requests...");
+  // 1. 55 Simultaneous directory read requests
+  console.log("  Testing 55 simultaneous directory read requests...");
   const t0 = Date.now();
   const readResults = await Promise.all(
-    Array.from({ length: 48 }).map(async () => {
+    Array.from({ length: 55 }).map(async () => {
       const s = await getEventState();
-      return s.participants.length === 48;
+      return s.participants.length === 55;
     })
   );
   const readDuration = Date.now() - t0;
   assert(
     readResults.every(Boolean),
-    `All 48 simultaneous read requests succeeded (${readDuration}ms total)`
+    `All 55 simultaneous read requests succeeded (${readDuration}ms total)`
   );
 
-  // 2. 46 Simultaneous first-time PIN registrations (p3 through p48)
-  console.log("  Testing 46 simultaneous independent PIN registrations...");
+  // 2. 53 Simultaneous first-time PIN registrations (p3 through p55)
+  console.log("  Testing 53 simultaneous independent PIN registrations...");
   const registrationPromises = state.participants.slice(2).map(async (p, idx) => {
     const pin = `1000${idx + 3}`;
     const res = await authenticateOrRegisterPin(p.id, pin);
@@ -320,10 +336,10 @@ async function runTests() {
 
   const regResults = await Promise.all(registrationPromises);
   const allRegSuccess = regResults.every((r) => r.success && r.isNew);
-  assert(allRegSuccess, "All 46 concurrent PIN registrations succeeded with zero lost updates");
+  assert(allRegSuccess, "All 53 concurrent PIN registrations succeeded with zero lost updates");
 
-  // 3. 46 Simultaneous reveals across all participants
-  console.log("  Testing 46 simultaneous independent reveal operations...");
+  // 3. 53 Simultaneous reveals across all participants
+  console.log("  Testing 53 simultaneous independent reveal operations...");
   const revealPromises = state.participants.slice(2).map(async (p, idx) => {
     const pin = `1000${idx + 3}`;
     const res = await revealRecipientWithPin(p.id, pin);
@@ -337,9 +353,9 @@ async function runTests() {
 
   const revResults = await Promise.all(revealPromises);
   const allRevSuccess = revResults.every((r) => r.success && r.hasRecipient);
-  assert(allRevSuccess, "All 46 concurrent reveal operations succeeded with zero errors");
+  assert(allRevSuccess, "All 53 concurrent reveal operations succeeded with zero errors");
 
-  // Verify that all 48 recipients match the original decrypted draw exactly
+  // Verify that all 55 recipients match the original decrypted draw exactly
   let assignmentsIntact = true;
   for (const r of revResults) {
     const expected = decryptedMap.get(state.participants.find((p) => p.id === r.id)!.name);
@@ -364,9 +380,9 @@ async function runTests() {
   // =========================================================================
   console.log("\n--- I. Organizer-Blind Privacy Audit ---");
   const adminState = await getAdminSafeState();
-  assert(adminState.totalParticipants === 48, "Organizer sees exactly 48 participants");
-  assert(adminState.registeredCount === 48, "All 48 participants tracked as registered");
-  assert(adminState.revealedCount === 48, "All 48 participants tracked as revealed");
+  assert(adminState.totalParticipants === 55, "Organizer sees exactly 55 participants");
+  assert(adminState.registeredCount === 55, "All 55 participants tracked as registered");
+  assert(adminState.revealedCount === 55, "All 55 participants tracked as revealed");
 
   // Strictly verify privacy: no PINs, salts, or recipients in admin state
   const leakedData = adminState.participants.some(
@@ -518,11 +534,11 @@ async function runTests() {
   const postRecoveryBinding = await getDeviceBinding(devA);
   assert(postRecoveryBinding === null, "Device A binding is safely cleared after recovery");
 
-  // 7. Verify all 48 assignments in storage remain 100% byte-for-byte intact
+  // 7. Verify all 55 assignments in storage remain 100% byte-for-byte intact
   const finalState = await getEventState();
   assert(finalState.version === 7, "Event state version is still Round 7");
-  assert(finalState.participants.length === 48, "Event participant roster count remains exactly 48");
-  assert(finalState.participants.every((p) => p.encryptedRecipient), "All 48 Secret Santa assignments remain byte-for-byte intact");
+  assert(finalState.participants.length === 55, "Event participant roster count remains exactly 55");
+  assert(finalState.participants.every((p) => p.encryptedRecipient), "All 55 Secret Santa assignments remain byte-for-byte intact");
 
   // =========================================================================
   // SUMMARY
