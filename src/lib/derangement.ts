@@ -20,30 +20,32 @@ export const FORBIDDEN_EXCLUSION_B = "Hamza Darawi";
 export const FORBIDDEN_EXCLUSION_C = "Raghad Al-Shobaki";
 export const FORBIDDEN_EXCLUSION_D = "Mohammad Shourati";
 
-// Canonical Designated Subgroup (Formerly 20, now 22 with Diana and Raghad)
+// Canonical Designated Subgroup (24 participants: 20 original + Raghad + Diana + Fadi + Njoud)
 export const SUBGROUP_20_IDS = [
-  "p34", // Qais Al-Hadeed
-  "p28", // Mohammad Shourati
-  "p27", // Mohammad Darras
-  "p8",  // Hamza Darawi
-  "p48", // Zeina Darawi
-  "p13", // Joewelle Ehab
-  "p42", // Yara Barjawi
-  "p20", // Leya Al-Khatib
-  "p29", // Nardeen Abdallah
-  "p36", // Sanad Al-Hunaiti
-  "p2",  // George Karkar
-  "p3",  // George Shammas
-  "p4",  // Ghazal Baqleh
-  "p15", // Jude Fanous
-  "p22", // Malak Hindaileh
-  "p37", // Sarah Rabadi
-  "p41", // Wasan Abu Hamdeh
-  "p26", // Michael Shamma
-  "p40", // Toleen Awwad
-  "p14", // Joseph Dababneh
-  "p35", // Raghad Al-Shobaki
-  "p49", // Diana 👩🏫🛘
+  "p3",  // Diana 👩‍🏫🛘
+  "p5",  // Fadi 👨‍🏫📖
+  "p6",  // George Karkar
+  "p7",  // George Shammas
+  "p8",  // Ghazal Baqleh
+  "p12", // Hamza Darawi
+  "p17", // Joewelle Ehab
+  "p18", // Joseph Dababneh
+  "p19", // Jude Fanous
+  "p24", // Leya Al-Khatib
+  "p25", // Malak Hindaileh
+  "p30", // Michael Shamma
+  "p32", // Mohammad Darras
+  "p33", // Mohammad Shourati
+  "p34", // Nardeen Abdallah
+  "p37", // Njoud👩‍🏫📜
+  "p40", // Qais Al-Hadeed
+  "p41", // Raghad Al-Shobaki
+  "p43", // Sanad Al-Hunaiti
+  "p44", // Sarah Rabadi
+  "p47", // Toleen Awwad
+  "p48", // Wasan Abu Hamdeh
+  "p49", // Yara Barjawi
+  "p55", // Zeina Darawi
 ] as const;
 
 export const SUBGROUP_20_ID_SET = new Set<string>(SUBGROUP_20_IDS);

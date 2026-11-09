@@ -28,12 +28,18 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Instant case-insensitive partial-name filtering with strict safety checks
+  // Instant case-insensitive partial-name filtering with strict safety checks and guaranteed A-Z sorting
   const safeList = Array.isArray(participants) ? participants : [];
   const filteredParticipants = useMemo(() => {
+    const sorted = [...safeList].sort((a, b) => {
+      const cleanA = (a.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
+      const cleanB = (b.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
+      return cleanA.localeCompare(cleanB);
+    });
+
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return safeList;
-    return safeList.filter(
+    if (!query) return sorted;
+    return sorted.filter(
       (p) => p && typeof p.name === "string" && p.name.toLowerCase().includes(query)
     );
   }, [safeList, searchQuery]);

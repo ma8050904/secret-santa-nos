@@ -216,9 +216,14 @@ export default function AdminDashboardPage() {
 
   const filteredParticipants = useMemo(() => {
     if (!state) return [];
+    const sorted = [...state.participants].sort((a, b) => {
+      const cleanA = (a.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
+      const cleanB = (b.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
+      return cleanA.localeCompare(cleanB);
+    });
     const q = filterQuery.trim().toLowerCase();
-    if (!q) return state.participants;
-    return state.participants.filter((p) => p.name.toLowerCase().includes(q));
+    if (!q) return sorted;
+    return sorted.filter((p) => p.name.toLowerCase().includes(q));
   }, [state, filterQuery]);
 
   const filteredDevices = useMemo(() => {
@@ -525,7 +530,7 @@ export default function AdminDashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-amber-200/90 leading-relaxed">
-                      Reroll the designated 22-person group only, leaving the assignments of the other participants unchanged.
+                      Reroll the designated 24-person group only, leaving the assignments of the other participants unchanged.
                     </p>
                     <p className="mt-2 text-[11px] text-amber-300/60 leading-normal">
                       Creates an automatic backup. Rerolls the closed subgroup with all mandatory constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad) while preserving the other assignments byte-for-byte.
@@ -993,7 +998,7 @@ export default function AdminDashboardPage() {
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
                     <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
-                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 56} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
+                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 55} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
                     <p>• <strong>Round Reset:</strong> Starts a new round with an incremented version number; reveals reset to 0 so participants can set a fresh PIN.</p>
                   </div>
 
