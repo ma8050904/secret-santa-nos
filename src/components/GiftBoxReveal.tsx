@@ -15,6 +15,40 @@ interface GiftBoxRevealProps {
   onRevealSuccess: (participantId: string) => void;
 }
 
+/**
+ * Renders recipient names while preserving full, authentic emoji colors.
+ * Text is styled with the metallic gold gradient, while emojis remain in their
+ * natural colorful presentation instead of being clipped to a monochrome mask.
+ */
+function renderRecipientName(name: string) {
+  const emojiRegex = /(\p{Extended_Pictographic}(?:\u200d\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}|[\ufe0e\ufe0f]|[\u{1F3FB}-\u{1F3FF}])*)/gu;
+  const parts = name.split(emojiRegex).filter(Boolean);
+
+  return parts.map((part, index) => {
+    const isEmoji = /(\p{Extended_Pictographic})/u.test(part);
+    if (isEmoji) {
+      return (
+        <span
+          key={index}
+          className="inline-block select-none font-normal align-middle mx-0.5 filter-none"
+          style={{
+            WebkitTextFillColor: "initial",
+            background: "none",
+          }}
+        >
+          {part}
+        </span>
+      );
+    }
+
+    return (
+      <span key={index} className="gold-text">
+        {part}
+      </span>
+    );
+  });
+}
+
 export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
   participant,
   pin,
@@ -204,8 +238,8 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
               <div className="absolute bottom-2 right-3 text-lg opacity-75">🎁</div>
 
               <div className="py-5">
-                <h2 className="font-serif text-3xl sm:text-4xl font-extrabold tracking-wide gold-text drop-shadow-[0_4px_16px_rgba(212,175,55,0.7)]">
-                  {recipientName}
+                <h2 className="font-serif text-3xl sm:text-4xl font-extrabold tracking-wide drop-shadow-[0_4px_16px_rgba(212,175,55,0.7)] text-amber-200">
+                  {renderRecipientName(recipientName)}
                 </h2>
               </div>
 
