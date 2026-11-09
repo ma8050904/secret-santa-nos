@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, Suspense, useCallback } from "react";
-import { ArrowDown, Gift, RefreshCw } from "lucide-react";
+import { ArrowDown, Gift, RefreshCw, Lock, ShieldAlert, X } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
@@ -87,6 +87,40 @@ function SecretSantaApp() {
   const [isCurrentlyRevealed, setIsCurrentlyRevealed] = useState(false);
   const [showRevealModal, setShowRevealModal] = useState(false);
 
+  // Floating Toast notification state (always in viewport)
+  const [toastNotification, setToastNotification] = useState<{
+    id: number;
+    title: string;
+    message: string;
+    type?: "error" | "warning" | "info";
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
+
+  const showToast = useCallback(
+    (params: {
+      title: string;
+      message: string;
+      type?: "error" | "warning" | "info";
+      actionLabel?: string;
+      onAction?: () => void;
+    }) => {
+      setToastNotification({
+        id: Date.now(),
+        ...params,
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!toastNotification) return;
+    const timer = setTimeout(() => {
+      setToastNotification(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [toastNotification]);
+
   // Load participants directory silently without flashing skeletons
   const loadParticipants = useCallback(async (isBackground = true) => {
     try {
@@ -170,9 +204,27 @@ function SecretSantaApp() {
     (p: ParticipantItem) => {
       if (activeParticipant) {
         if (activeParticipant.id !== p.id) {
-          setError(
-            `This device is bound to ${activeParticipant.name}. Accessing multiple accounts from the same device is not permitted.`
-          );
+          if (typeof window !== "undefined" && "vibrate" in navigator) {
+            try {
+              navigator.vibrate([40, 60, 40]);
+            } catch {
+              // ignore
+            }
+          }
+
+          showToast({
+            title: "Device Locked to Your Name",
+            message: `This device is bound to ${activeParticipant.name}. To preserve the secrecy of the draw, each device can only be used by one person.`,
+            type: "warning",
+            actionLabel: `Open ${activeParticipant.name}'s Gift`,
+            onAction: () => {
+              if (activePin) {
+                setShowRevealModal(true);
+              } else {
+                setSelectedForAuth(activeParticipant);
+              }
+            },
+          });
           return;
         }
         if (activePin) {
@@ -184,7 +236,7 @@ function SecretSantaApp() {
       }
       setSelectedForAuth(p);
     },
-    [activeParticipant, activePin]
+    [activeParticipant, activePin, showToast]
   );
 
   // PIN verification success
@@ -308,6 +360,73 @@ function SecretSantaApp() {
           onClose={() => setShowRevealModal(false)}
           onRevealSuccess={() => handleRevealSuccess(activeParticipant.id)}
         />
+      )}
+
+      {/* =====================================================================
+          FLOATING VIEWPORT TOAST NOTIFICATION (ALWAYS VISIBLE REGARDLESS OF SCROLL)
+         ===================================================================== */}
+      {toastNotification && (
+        <div
+          key={toastNotification.id}
+          role="alert"
+          aria-live="assertive"
+          className="fixed bottom-6 inset-x-4 max-w-md mx-auto z-50 animate-in slide-in-from-bottom-5 fade-in duration-300"
+        >
+          <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400/90 bg-gradient-to-br from-[#1a0606] via-[#140505] to-[#07180e] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.95),0_0_30px_rgba(212,175,55,0.4)] backdrop-blur-2xl">
+            {/* Festive ambient glow */}
+            <div className="pointer-events-none absolute -top-10 -right-10 h-24 w-24 rounded-full bg-amber-400/20 blur-xl" />
+
+            <div className="flex items-start gap-3.5">
+              {/* Icon badge */}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-400/60 bg-gradient-to-br from-amber-500/20 to-red-600/30 text-amber-300 shadow-inner">
+                <Lock className="h-5 w-5" />
+              </div>
+
+              {/* Message body */}
+              <div className="flex-1 min-w-0 pr-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-serif text-sm font-bold text-amber-300 tracking-wide flex items-center gap-1.5">
+                    <span>{toastNotification.title}</span>
+                  </h4>
+                  <button
+                    onClick={() => setToastNotification(null)}
+                    className="flex h-6 w-6 items-center justify-center rounded-lg text-amber-300/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                    aria-label="Dismiss notification"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <p className="mt-1.5 text-xs text-emerald-100/90 leading-relaxed font-medium">
+                  {toastNotification.message}
+                </p>
+
+                {/* Direct Action Button */}
+                {toastNotification.actionLabel && toastNotification.onAction && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const action = toastNotification.onAction;
+                        setToastNotification(null);
+                        action?.();
+                      }}
+                      className="group flex items-center gap-2 rounded-xl border border-amber-300 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 px-3.5 py-1.5 text-xs font-bold text-slate-950 shadow-md transition-all hover:scale-[1.02] hover:brightness-110 active:scale-95 cursor-pointer"
+                    >
+                      <Gift className="h-3.5 w-3.5 transition-transform group-hover:rotate-12" />
+                      <span>{toastNotification.actionLabel}</span>
+                    </button>
+                    <button
+                      onClick={() => setToastNotification(null)}
+                      className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-amber-300/80 hover:text-white transition-colors cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* =====================================================================
