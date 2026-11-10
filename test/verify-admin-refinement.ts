@@ -88,8 +88,17 @@ async function verifyRefinements() {
     console.log("✅ PASS: Clean audit state restored after verification (0 entries)");
   }
 
+  // Test 8: Reset Device Bindings option and modal are completely absent
+  const hasResetDevicesModal = /activeModal\s*===\s*["']RESET_DEVICES["']/.test(adminPageContent);
+  const hasResetDevicesButton = /["']Reset Device Bindings["']/i.test(adminPageContent);
+  if (!hasResetDevicesModal && !hasResetDevicesButton) {
+    console.log("✅ PASS: Standalone Reset Device Bindings option and modal are completely absent");
+  } else {
+    throw new Error("FAIL: Reset Device Bindings was detected in admin page!");
+  }
+
   console.log("\n========================================================");
-  console.log("  ALL 7 ADMIN REFINEMENT VERIFICATIONS PASSED! ✅");
+  console.log("  ALL 8 ADMIN REFINEMENT VERIFICATIONS PASSED! ✅");
   console.log("========================================================");
 }
 

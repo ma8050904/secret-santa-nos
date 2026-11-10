@@ -40,7 +40,8 @@ export async function POST(req: NextRequest) {
       id: credential.id,
       publicKey: Buffer.from(credential.publicKey).toString("base64url"),
       counter: credential.counter,
-      transports: body.response?.response?.transports || credential.transports || ["internal"],
+      // Strictly internal platform authenticator (Mac Touch ID) - prevents cross-device QR modal
+      transports: ["internal"],
       deviceType: credentialDeviceType || "platform",
       backedUp: Boolean(credentialBackedUp),
       createdAt: new Date().toISOString(),

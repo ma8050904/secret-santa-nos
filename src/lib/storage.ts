@@ -2081,6 +2081,7 @@ export async function regenerateFullDraw(
   state.generatedAt = new Date().toISOString();
   state.masterSalt = newMasterSalt;
   state.participants = newParticipantsState;
+  state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
   // Clear caches
   runtimeParticipantCache.clear();
@@ -2088,9 +2089,24 @@ export async function regenerateFullDraw(
   registeredParticipantIds.clear();
   deviceBindingCache.clear();
 
+  // Clear local device directory
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          fs.unlinkSync(path.join(dir, f));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   await saveEventState(state);
 
-  // Clean runtime blobs (except audit logs)
+  // Clean runtime blobs (devices, participant records, but preserve audit logs)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
       const vList = await list({ prefix: "v7/", token: process.env.BLOB_READ_WRITE_TOKEN });

@@ -130,7 +130,7 @@ export default function AdminDashboardPage() {
   const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
 
   // Active Confirmation Modal state (Full Event Reset and Reroll Subgroup completely removed)
-  const [activeModal, setActiveModal] = useState<"FULL_REGENERATE" | "RESET_DEVICES" | null>(null);
+  const [activeModal, setActiveModal] = useState<"FULL_REGENERATE" | null>(null);
   const [isActionSubmitting, setIsActionSubmitting] = useState(false);
 
   // Participant Directory Collapsible state (collapsed by default)
@@ -520,15 +520,13 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // Execute Sensitive Action (Full Event Reset and Reroll Subgroup completely removed)
-  const executeAction = async (actionType: "FULL_REGENERATE" | "RESET_DEVICES") => {
+  // Execute Sensitive Action: Full Draw Regeneration (clears reveals, PINs, and resets all devices together)
+  const executeAction = async (actionType: "FULL_REGENERATE") => {
     setIsActionSubmitting(true);
     setActionSuccessMsg(null);
     setActionErrorMsg(null);
 
-    let endpoint = "";
-    if (actionType === "FULL_REGENERATE") endpoint = "/api/admin/generate";
-    else if (actionType === "RESET_DEVICES") endpoint = "/api/admin/reset-devices";
+    const endpoint = "/api/admin/generate";
 
     try {
       const res = await fetch(endpoint, {
@@ -949,7 +947,7 @@ export default function AdminDashboardPage() {
                     <span>Participant QR Code</span>
                   </button>
 
-                  {/* Regenerate Full Draw */}
+                  {/* Regenerate Full Draw (Wipes reveals, PINs, and resets all device bindings together) */}
                   <button
                     type="button"
                     onClick={() => setActiveModal("FULL_REGENERATE")}
@@ -957,16 +955,6 @@ export default function AdminDashboardPage() {
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
                     <span>Regenerate Draw</span>
-                  </button>
-
-                  {/* Reset All Device Bindings */}
-                  <button
-                    type="button"
-                    onClick={() => setActiveModal("RESET_DEVICES")}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/70 hover:bg-sky-900/80 px-3 py-1.5 text-xs font-medium text-sky-200 shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
-                  >
-                    <Smartphone className="h-3.5 w-3.5" />
-                    <span>Reset Device Bindings</span>
                   </button>
                 </div>
               </div>
@@ -1438,7 +1426,7 @@ export default function AdminDashboardPage() {
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
                     <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
                     <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 56} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
-                    <p>• <strong>Round Reset:</strong> Starts a new round with an incremented version number; reveals reset to 0 so participants can set a fresh PIN.</p>
+                    <p>• <strong>Device & Reveal Reset:</strong> Starts a new round with an incremented version number, resets reveals to 0, clears all PINs, and automatically wipes all device bindings together to guarantee full privacy and prevent unauthorized re-use.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">
@@ -1459,64 +1447,12 @@ export default function AdminDashboardPage() {
                       {isActionSubmitting ? (
                         <>
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>Regenerating draw...</span>
+                          <span>Regenerating draw & wiping devices...</span>
                         </>
                       ) : (
                         <>
                           <RotateCcw className="h-3.5 w-3.5" />
                           <span>Confirm Full Draw Regeneration</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* MODAL 2: RESET DEVICES */}
-              {activeModal === "RESET_DEVICES" && (
-                <div>
-                  <div className="flex items-center gap-3 text-sky-400 mb-3">
-                    <div className="p-3 rounded-2xl border border-sky-500/40 bg-sky-950/80">
-                      <Smartphone className="h-6 w-6 text-sky-300" />
-                    </div>
-                    <div>
-                      <h3 className="font-serif text-lg font-bold text-white">
-                        Reset Registered Device Bindings
-                      </h3>
-                      <p className="text-xs text-sky-300/80">Release bound devices without affecting participant accounts</p>
-                    </div>
-                  </div>
-
-                  <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-sky-500/30 bg-sky-950/30 p-4">
-                    <p>• <strong>Device Unlock:</strong> Immediately unlinks all currently registered hardware identifiers.</p>
-                    <p>• <strong>Data Preservation:</strong> Does not delete any PINs, does not alter the draw, and leaves reveal statuses intact.</p>
-                    <p>• <strong>Immediate Re-entry:</strong> Any participant who switched phones or cleared browser data can log in again using their existing PIN.</p>
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal(null)}
-                      disabled={isActionSubmitting}
-                      className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => executeAction("RESET_DEVICES")}
-                      disabled={isActionSubmitting}
-                      className="flex items-center gap-2 rounded-xl border border-sky-400 bg-sky-600 hover:bg-sky-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
-                    >
-                      {isActionSubmitting ? (
-                        <>
-                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>Resetting device bindings...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Smartphone className="h-3.5 w-3.5" />
-                          <span>Confirm Device Reset</span>
                         </>
                       )}
                     </button>
