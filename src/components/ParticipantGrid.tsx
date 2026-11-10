@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { Search, Gift, Check, Sparkles, RefreshCw } from "lucide-react";
 
 export interface ParticipantItem {
@@ -18,6 +18,109 @@ interface ParticipantGridProps {
   onRetry?: () => void;
 }
 
+interface ParticipantCardProps {
+  participant: ParticipantItem;
+  isSelected: boolean;
+  onSelect: (p: ParticipantItem) => void;
+}
+
+/**
+ * Isolated, memoized participant card to eliminate unnecessary re-renders across all 56 cards.
+ * Only the clicked card and the previously selected card re-render on selection.
+ */
+const ParticipantCard: React.FC<ParticipantCardProps> = React.memo(
+  ({ participant: p, isSelected, onSelect }) => {
+    const initials = useMemo(() => {
+      const cleanWords = (p.name || "")
+        .replace(/[^\p{L}\s]/gu, "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      return cleanWords.length >= 2
+        ? (cleanWords[0][0] + cleanWords[1][0]).toUpperCase()
+        : cleanWords.length === 1
+        ? cleanWords[0][0].toUpperCase()
+        : (p.name || "").trim().slice(0, 1).toUpperCase();
+    }, [p.name]);
+
+    const handleClick = useCallback(() => {
+      onSelect(p);
+    }, [onSelect, p]);
+
+    return (
+      <button
+        onClick={handleClick}
+        type="button"
+        style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
+        className={`christmas-glass-card group relative flex items-center justify-between overflow-hidden rounded-2xl p-3.5 text-left cursor-pointer select-none active:scale-[0.98] transition-transform duration-100 ${
+          isSelected
+            ? "border-amber-400 bg-gradient-to-r from-red-950/90 to-emerald-950/90 shadow-[0_0_20px_rgba(212,175,55,0.4)] ring-2 ring-amber-400/80"
+            : "hover:border-amber-400/60"
+        }`}
+      >
+        {/* Subtle festive shimmer */}
+        <div className="pointer-events-none absolute top-0 right-0 -mr-6 -mt-6 h-12 w-12 rounded-full bg-amber-400/10 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Monogram Badge */}
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border font-bold text-xs tracking-wider shadow-sm transition-transform duration-150 ${
+              isSelected
+                ? "border-amber-300 bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black shadow-[0_0_12px_rgba(212,175,55,0.6)]"
+                : p.isRevealed
+                ? "border-emerald-500/40 bg-emerald-950/80 text-emerald-200"
+                : "border-amber-500/30 bg-gradient-to-br from-red-900/60 to-red-950/80 text-amber-200"
+            }`}
+          >
+            {initials}
+          </div>
+
+          {/* Name & Status */}
+          <div className="min-w-0 flex-1">
+            <p
+              className={`truncate text-sm font-semibold tracking-wide transition-colors duration-100 ${
+                isSelected ? "text-amber-200" : "text-white group-hover:text-amber-200"
+              }`}
+            >
+              {p.name}
+            </p>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              {p.isRevealed ? (
+                <>
+                  <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+                  <span className="text-[11px] font-medium text-emerald-300/90">
+                    Revealed
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3 w-3 text-amber-400/80 shrink-0" />
+                  <span className="text-[11px] font-medium text-amber-300/80">
+                    Ready
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Arrow / Action Indicator */}
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-500/20 bg-[#051a0f]/60 text-amber-400 transition-colors duration-150 group-hover:border-amber-400 group-hover:bg-amber-400/20">
+          <Gift className="h-4 w-4" />
+        </div>
+      </button>
+    );
+  },
+  (prev, next) =>
+    prev.participant.id === next.participant.id &&
+    prev.participant.name === next.participant.name &&
+    prev.participant.isRevealed === next.participant.isRevealed &&
+    prev.isSelected === next.isSelected
+);
+
+ParticipantCard.displayName = "ParticipantCard";
+
 const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
   participants = [],
   isLoading,
@@ -28,21 +131,25 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Instant case-insensitive partial-name filtering with strict safety checks and guaranteed A-Z sorting
   const safeList = Array.isArray(participants) ? participants : [];
-  const filteredParticipants = useMemo(() => {
-    const sorted = [...safeList].sort((a, b) => {
+
+  // Sort once per list reference change
+  const sortedList = useMemo(() => {
+    return [...safeList].sort((a, b) => {
       const cleanA = (a.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
       const cleanB = (b.name || "").replace(/^[^\p{L}]+/u, "").toLowerCase();
       return cleanA.localeCompare(cleanB);
     });
+  }, [safeList]);
 
+  // Instant case-insensitive partial-name filtering
+  const filteredParticipants = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return sorted;
-    return sorted.filter(
+    if (!query) return sortedList;
+    return sortedList.filter(
       (p) => p && typeof p.name === "string" && p.name.toLowerCase().includes(query)
     );
-  }, [safeList, searchQuery]);
+  }, [sortedList, searchQuery]);
 
   return (
     <section className="relative z-20 mx-auto max-w-5xl px-4 py-4 sm:py-6">
@@ -57,7 +164,7 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search name..."
           aria-label="Search participants"
-          className="w-full rounded-2xl border border-amber-500/30 bg-[#0a2618]/85 py-3 pr-10 pl-10 text-sm text-white placeholder-emerald-300/40 shadow-[0_4px_20px_rgba(0,0,0,0.3)] backdrop-blur-md transition-all focus:border-amber-400 focus:bg-[#0c2e1c] focus:ring-2 focus:ring-amber-400/25 focus:outline-none"
+          className="w-full rounded-2xl border border-amber-500/30 bg-[#0a2618]/90 py-3 pr-10 pl-10 text-sm text-white placeholder-emerald-300/40 shadow-[0_4px_20px_rgba(0,0,0,0.3)] transition-colors focus:border-amber-400 focus:bg-[#0c2e1c] focus:ring-2 focus:ring-amber-400/25 focus:outline-none"
         />
         {searchQuery && (
           <button
@@ -122,85 +229,14 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
       {/* Participants Grid */}
       {filteredParticipants.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-          {filteredParticipants.map((p) => {
-            const isSelected = selectedParticipantId === p.id;
-            const cleanWords = (p.name || "")
-              .replace(/[^\p{L}\s]/gu, "")
-              .trim()
-              .split(/\s+/)
-              .filter(Boolean);
-
-            const initials =
-              cleanWords.length >= 2
-                ? (cleanWords[0][0] + cleanWords[1][0]).toUpperCase()
-                : cleanWords.length === 1
-                ? cleanWords[0][0].toUpperCase()
-                : (p.name || "").trim().slice(0, 1).toUpperCase();
-
-            return (
-              <button
-                key={p.id}
-                onClick={() => onSelectParticipant(p)}
-                type="button"
-                className={`christmas-glass-card group relative flex items-center justify-between overflow-hidden rounded-2xl p-3.5 text-left transition-all duration-300 cursor-pointer ${
-                  isSelected
-                    ? "border-amber-400 bg-gradient-to-r from-red-950/90 to-emerald-950/90 shadow-[0_0_25px_rgba(212,175,55,0.4)] ring-2 ring-amber-400/80"
-                    : "hover:border-amber-400/60 hover:shadow-[0_8px_25px_rgba(0,0,0,0.5)]"
-                }`}
-              >
-                {/* Decorative festive corner shimmer */}
-                <div className="pointer-events-none absolute top-0 right-0 -mr-6 -mt-6 h-12 w-12 rounded-full bg-amber-400/10 blur-md transition-opacity group-hover:opacity-100" />
-
-                <div className="flex items-center gap-3">
-                  {/* Monogram Badge */}
-                  <div
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border font-bold text-xs tracking-wider shadow-sm transition-transform duration-300 group-hover:scale-105 ${
-                      isSelected
-                        ? "border-amber-300 bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black shadow-[0_0_15px_rgba(212,175,55,0.6)]"
-                        : p.isRevealed
-                        ? "border-emerald-500/40 bg-emerald-950/80 text-emerald-200"
-                        : "border-amber-500/30 bg-gradient-to-br from-red-900/60 to-red-950/80 text-amber-200"
-                    }`}
-                  >
-                    {initials}
-                  </div>
-
-                  {/* Name & Status */}
-                  <div className="min-w-0 flex-1">
-                    <p
-                      className={`truncate text-sm font-semibold tracking-wide transition-colors ${
-                        isSelected ? "text-amber-200" : "text-white group-hover:text-amber-200"
-                      }`}
-                    >
-                      {p.name}
-                    </p>
-                    <div className="mt-0.5 flex items-center gap-1.5">
-                      {p.isRevealed ? (
-                        <>
-                          <Check className="h-3 w-3 text-emerald-400 shrink-0" />
-                          <span className="text-[11px] font-medium text-emerald-300/90">
-                            Revealed
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-3 w-3 text-amber-400/80 shrink-0" />
-                          <span className="text-[11px] font-medium text-amber-300/80">
-                            Ready
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Arrow / Action Indicator */}
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-500/20 bg-[#051a0f]/60 text-amber-400 transition-all duration-300 group-hover:border-amber-400 group-hover:bg-amber-400/20">
-                  <Gift className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12" />
-                </div>
-              </button>
-            );
-          })}
+          {filteredParticipants.map((p) => (
+            <ParticipantCard
+              key={p.id}
+              participant={p}
+              isSelected={selectedParticipantId === p.id}
+              onSelect={onSelectParticipant}
+            />
+          ))}
         </div>
       )}
     </section>
