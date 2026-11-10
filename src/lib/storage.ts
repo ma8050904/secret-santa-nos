@@ -42,6 +42,11 @@ export interface StoredParticipant {
   pinHash?: string | null;
   pinSalt?: string | null;
   encryptedWithPin?: boolean;
+  // Biometric / Device Screen Lock Passkey fields
+  passkeyCredentialId?: string | null;
+  passkeyPublicKey?: string | null;
+  passkeyCounter?: number;
+  passkeyRegisteredAt?: string | null;
 }
 
 export interface AdminPasskey {
@@ -74,13 +79,17 @@ export interface EventState {
 export interface ParticipantRuntimeState {
   participantId: string;
   name: string;
-  pinHash: string;
-  pinSalt: string;
-  encryptedRecipient: string; // AES-256-GCM encrypted with participant's personal PIN
+  pinHash?: string | null;
+  pinSalt?: string | null;
+  encryptedRecipient: string; // AES-256-GCM encrypted
   encryptedWithPin: boolean;
   isRevealed: boolean;
   revealedAt: string | null;
   registeredAt: string;
+  passkeyCredentialId?: string | null;
+  passkeyPublicKey?: string | null;
+  passkeyCounter?: number;
+  passkeyRegisteredAt?: string | null;
 }
 
 export interface DeviceBindingRecord {
@@ -182,6 +191,10 @@ function createInitialState(): EventState {
       pinHash: null,
       pinSalt: null,
       encryptedWithPin: false,
+      passkeyCredentialId: null,
+      passkeyPublicKey: null,
+      passkeyCounter: 0,
+      passkeyRegisteredAt: null,
     };
   });
 
@@ -422,7 +435,7 @@ export async function getParticipantRuntimeState(
         const parsed: ParticipantRuntimeState = JSON.parse(text);
         runtimeParticipantCache.set(participantId, parsed);
         if (parsed.isRevealed) revealedParticipantIds.add(participantId);
-        if (parsed.pinHash) registeredParticipantIds.add(participantId);
+        if (parsed.pinHash || parsed.passkeyCredentialId) registeredParticipantIds.add(participantId);
         return parsed;
       }
     } catch {
@@ -438,7 +451,7 @@ export async function getParticipantRuntimeState(
       const parsed: ParticipantRuntimeState = JSON.parse(data);
       runtimeParticipantCache.set(participantId, parsed);
       if (parsed.isRevealed) revealedParticipantIds.add(participantId);
-      if (parsed.pinHash) registeredParticipantIds.add(participantId);
+      if (parsed.pinHash || parsed.passkeyCredentialId) registeredParticipantIds.add(participantId);
       return parsed;
     }
   } catch {
@@ -448,21 +461,25 @@ export async function getParticipantRuntimeState(
   // 3. Fallback to check master state participant record
   const state = await getEventState();
   const p = state.participants.find((item) => item.id === participantId);
-  if (p && p.pinHash && p.pinSalt && p.encryptedRecipient && p.encryptedWithPin) {
+  if (p && (p.pinHash || p.passkeyCredentialId) && p.encryptedRecipient) {
     const fromMaster: ParticipantRuntimeState = {
       participantId: p.id,
       name: p.name,
       pinHash: p.pinHash,
       pinSalt: p.pinSalt,
       encryptedRecipient: p.encryptedRecipient,
-      encryptedWithPin: true,
+      encryptedWithPin: Boolean(p.encryptedWithPin),
       isRevealed: p.isRevealed,
       revealedAt: p.revealedAt,
-      registeredAt: p.revealedAt || new Date().toISOString(),
+      registeredAt: p.revealedAt || p.passkeyRegisteredAt || new Date().toISOString(),
+      passkeyCredentialId: p.passkeyCredentialId,
+      passkeyPublicKey: p.passkeyPublicKey,
+      passkeyCounter: p.passkeyCounter,
+      passkeyRegisteredAt: p.passkeyRegisteredAt,
     };
     runtimeParticipantCache.set(participantId, fromMaster);
     if (fromMaster.isRevealed) revealedParticipantIds.add(participantId);
-    if (fromMaster.pinHash) registeredParticipantIds.add(participantId);
+    if (fromMaster.pinHash || fromMaster.passkeyCredentialId) registeredParticipantIds.add(participantId);
     return fromMaster;
   }
 
@@ -478,7 +495,7 @@ export async function saveParticipantRuntimeState(
   // Update in-memory caches
   runtimeParticipantCache.set(state.participantId, state);
   if (state.isRevealed) revealedParticipantIds.add(state.participantId);
-  if (state.pinHash) registeredParticipantIds.add(state.participantId);
+  if (state.pinHash || state.passkeyCredentialId) registeredParticipantIds.add(state.participantId);
 
   // Sync to inMemoryStateCache if present
   if (inMemoryStateCache) {
@@ -487,9 +504,13 @@ export async function saveParticipantRuntimeState(
       match.pinHash = state.pinHash;
       match.pinSalt = state.pinSalt;
       match.encryptedRecipient = state.encryptedRecipient;
-      match.encryptedWithPin = true;
+      match.encryptedWithPin = state.encryptedWithPin;
       match.isRevealed = state.isRevealed;
       match.revealedAt = state.revealedAt;
+      match.passkeyCredentialId = state.passkeyCredentialId;
+      match.passkeyPublicKey = state.passkeyPublicKey;
+      match.passkeyCounter = state.passkeyCounter;
+      match.passkeyRegisteredAt = state.passkeyRegisteredAt;
     }
   }
 
@@ -508,7 +529,7 @@ export async function saveParticipantRuntimeState(
       ];
 
       // Lightweight markers for lightning-fast directory queries
-      if (state.pinHash) {
+      if (state.pinHash || state.passkeyCredentialId) {
         promises.push(
           put(`v7/registered/${state.participantId}`, "1", {
             access: "private",
@@ -802,6 +823,185 @@ export async function revealRecipientWithPin(
 
   const isFirstReveal = !runtime.isRevealed;
 
+  if (isFirstReveal) {
+    runtime.isRevealed = true;
+    runtime.revealedAt = new Date().toISOString();
+    await saveParticipantRuntimeState(runtime);
+  }
+
+  return {
+    success: true,
+    recipientName: decryptedName,
+    isFirstReveal,
+  };
+}
+
+/**
+ * Retrieves biometric passkey and PIN status for a participant.
+ */
+export async function getParticipantBiometricStatus(participantId: string): Promise<{
+  hasPasskey: boolean;
+  hasPin: boolean;
+  isRevealed: boolean;
+  passkeyCredentialId?: string | null;
+  passkeyPublicKey?: string | null;
+  name: string;
+}> {
+  const runtime = await getParticipantRuntimeState(participantId);
+  const masterState = await getEventState();
+  const p = masterState.participants.find((item) => item.id === participantId);
+  return {
+    hasPasskey: Boolean(runtime?.passkeyCredentialId || p?.passkeyCredentialId),
+    hasPin: Boolean(runtime?.pinHash || p?.pinHash),
+    isRevealed: Boolean(runtime?.isRevealed || p?.isRevealed),
+    passkeyCredentialId: runtime?.passkeyCredentialId || p?.passkeyCredentialId || null,
+    passkeyPublicKey: runtime?.passkeyPublicKey || p?.passkeyPublicKey || null,
+    name: runtime?.name || p?.name || participantId,
+  };
+}
+
+/**
+ * Registers a new biometric passkey credential (Face ID / Touch ID / Device Passcode) for a participant.
+ */
+export async function registerParticipantBiometric(
+  participantId: string,
+  credential: { id: string; publicKey: string; counter?: number }
+): Promise<{
+  success: boolean;
+  error?: string;
+  participant?: { id: string; name: string; isRevealed: boolean };
+  recipientName?: string;
+}> {
+  const masterState = await getEventState();
+  const participant = masterState.participants.find((p) => p.id === participantId);
+  if (!participant) {
+    return { success: false, error: "Participant not found." };
+  }
+
+  let originalRecipient = "";
+  try {
+    if (!participant.encryptedRecipient) {
+      throw new Error("No assignment found for participant");
+    }
+    originalRecipient = decryptRecipient(
+      participant.encryptedRecipient,
+      participant.code,
+      masterState.masterSalt
+    );
+  } catch (err) {
+    console.error("Decryption error during biometric registration:", err);
+    return { success: false, error: "Could not initialize assignment." };
+  }
+
+  const runtime = (await getParticipantRuntimeState(participantId)) || {
+    participantId: participant.id,
+    name: participant.name,
+    encryptedRecipient: participant.encryptedRecipient,
+    encryptedWithPin: false,
+    isRevealed: false,
+    revealedAt: null,
+    registeredAt: new Date().toISOString(),
+  };
+
+  runtime.passkeyCredentialId = credential.id;
+  runtime.passkeyPublicKey = credential.publicKey;
+  runtime.passkeyCounter = credential.counter ?? 0;
+  runtime.passkeyRegisteredAt = new Date().toISOString();
+
+  await saveParticipantRuntimeState(runtime);
+
+  return {
+    success: true,
+    participant: {
+      id: participant.id,
+      name: participant.name,
+      isRevealed: runtime.isRevealed,
+    },
+    recipientName: runtime.isRevealed ? originalRecipient : undefined,
+  };
+}
+
+/**
+ * Authenticates a participant using their registered biometric credential.
+ */
+export async function authenticateParticipantBiometric(
+  participantId: string
+): Promise<{
+  success: boolean;
+  error?: string;
+  participant?: { id: string; name: string; isRevealed: boolean };
+  recipientName?: string;
+}> {
+  const masterState = await getEventState();
+  const participant = masterState.participants.find((p) => p.id === participantId);
+  if (!participant) {
+    return { success: false, error: "Participant not found." };
+  }
+
+  const runtime = await getParticipantRuntimeState(participantId);
+  if (!runtime || !runtime.passkeyCredentialId) {
+    return { success: false, error: "No biometric passkey registered for this participant." };
+  }
+
+  let recipientName: string | undefined;
+  if (runtime.isRevealed) {
+    try {
+      recipientName = decryptRecipient(
+        participant.encryptedRecipient!,
+        participant.code,
+        masterState.masterSalt
+      );
+    } catch (err) {
+      console.error("Recipient decryption error:", err);
+    }
+  }
+
+  return {
+    success: true,
+    participant: {
+      id: participant.id,
+      name: participant.name,
+      isRevealed: runtime.isRevealed,
+    },
+    recipientName,
+  };
+}
+
+/**
+ * Reveals recipient for a participant authenticated via biometrics or active session.
+ */
+export async function revealRecipientWithBiometric(
+  participantId: string
+): Promise<{
+  success: boolean;
+  recipientName?: string;
+  isFirstReveal?: boolean;
+  error?: string;
+}> {
+  const masterState = await getEventState();
+  const participant = masterState.participants.find((p) => p.id === participantId);
+  if (!participant) {
+    return { success: false, error: "Participant not found." };
+  }
+
+  const runtime = await getParticipantRuntimeState(participantId);
+  if (!runtime || !runtime.passkeyCredentialId) {
+    return { success: false, error: "No biometric credential found for this participant." };
+  }
+
+  let decryptedName: string;
+  try {
+    decryptedName = decryptRecipient(
+      participant.encryptedRecipient!,
+      participant.code,
+      masterState.masterSalt
+    );
+  } catch (err) {
+    console.error("Biometric reveal decryption error:", err);
+    return { success: false, error: "Failed to decrypt secret assignment." };
+  }
+
+  const isFirstReveal = !runtime.isRevealed;
   if (isFirstReveal) {
     runtime.isRevealed = true;
     runtime.revealedAt = new Date().toISOString();
@@ -1954,6 +2154,10 @@ export async function rerollSubgroup20(
       pinHash: null,
       pinSalt: null,
       encryptedWithPin: false,
+      passkeyCredentialId: null,
+      passkeyPublicKey: null,
+      passkeyCounter: 0,
+      passkeyRegisteredAt: null,
     };
   });
 
@@ -2073,6 +2277,10 @@ export async function regenerateFullDraw(
       pinHash: null,
       pinSalt: null,
       encryptedWithPin: false,
+      passkeyCredentialId: null,
+      passkeyPublicKey: null,
+      passkeyCounter: 0,
+      passkeyRegisteredAt: null,
     };
   });
 

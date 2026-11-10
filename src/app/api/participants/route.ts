@@ -17,6 +17,8 @@ export async function GET() {
       id: p.id,
       name: p.name,
       isRevealed: Boolean(p.isRevealed),
+      hasRegistered: Boolean(p.pinHash || p.passkeyCredentialId),
+      hasPasskey: Boolean(p.passkeyCredentialId),
     }));
 
     return NextResponse.json(

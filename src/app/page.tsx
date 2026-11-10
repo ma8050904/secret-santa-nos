@@ -261,7 +261,7 @@ function SecretSantaApp() {
             type: "warning",
             actionLabel: `🎁 Open ${lockedUser.name}'s Gift`,
             onAction: () => {
-              if (activeParticipant && activePin) {
+              if (activeParticipant) {
                 setShowRevealModal(true);
               } else {
                 const target =
@@ -277,7 +277,7 @@ function SecretSantaApp() {
           return;
         }
 
-        if (activeParticipant && activePin) {
+        if (activeParticipant) {
           setShowRevealModal(true);
         } else {
           setSelectedForAuth(p);
@@ -451,10 +451,10 @@ function SecretSantaApp() {
       {/* =====================================================================
           GIFT BOX REVEAL MODAL
          ===================================================================== */}
-      {showRevealModal && activeParticipant && activePin && (
+      {showRevealModal && activeParticipant && (
         <GiftBoxReveal
           participant={activeParticipant}
-          pin={activePin}
+          pin={activePin || "biometric"}
           initialRecipientName={revealedRecipient}
           initialIsRevealed={isCurrentlyRevealed}
           onClose={() => setShowRevealModal(false)}

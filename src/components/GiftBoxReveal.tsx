@@ -109,7 +109,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         },
         body: JSON.stringify({
           participantId: participant.id,
-          pin: pin,
+          pin: pin === "biometric" ? "" : pin,
         }),
       });
 

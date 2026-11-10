@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revealRecipientWithPin, getDeviceBinding, recordDeviceReveal } from "@/lib/storage";
+import { revealRecipientWithPin, revealRecipientWithBiometric, getDeviceBinding, recordDeviceReveal } from "@/lib/storage";
 import { getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
@@ -16,10 +16,6 @@ export async function POST(req: NextRequest) {
 
     if (!participantId || typeof participantId !== "string") {
       return NextResponse.json({ success: false, error: "Participant ID is required" }, { status: 400 });
-    }
-
-    if (!pin || typeof pin !== "string" || pin.trim().length === 0) {
-      return NextResponse.json({ success: false, error: "Personal PIN is required to open your gift" }, { status: 400 });
     }
 
     // Extract device identifier
@@ -60,7 +56,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await revealRecipientWithPin(participantId, pin.trim());
+    let result;
+    if (pin && typeof pin === "string" && pin.trim().length > 0) {
+      result = await revealRecipientWithPin(participantId, pin.trim());
+    } else {
+      // Biometric or Session-authenticated reveal
+      if (!session || session.participantId !== participantId) {
+        return NextResponse.json(
+          { success: false, error: "Authentication or PIN is required to open your gift." },
+          { status: 401 }
+        );
+      }
+      result = await revealRecipientWithBiometric(participantId);
+    }
 
     if (!result.success) {
       return NextResponse.json(

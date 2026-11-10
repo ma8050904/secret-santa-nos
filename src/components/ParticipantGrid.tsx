@@ -7,6 +7,8 @@ export interface ParticipantItem {
   id: string;
   name: string;
   isRevealed: boolean;
+  hasRegistered?: boolean;
+  hasPasskey?: boolean;
 }
 
 interface ParticipantGridProps {
