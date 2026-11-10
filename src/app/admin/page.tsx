@@ -79,6 +79,7 @@ interface AdminAuditLogEntry {
 interface AdminSafeState {
   status: string;
   version: number;
+  drawMode?: "constrained" | "free";
   createdAt: string;
   generatedAt: string | null;
   totalParticipants: number;
@@ -136,6 +137,11 @@ export default function AdminDashboardPage() {
   const [showPasswordFallback, setShowPasswordFallback] = useState(false);
   const [resetParticipantTarget, setResetParticipantTarget] = useState<AdminParticipant | null>(null);
   const [isResettingParticipant, setIsResettingParticipant] = useState(false);
+
+  // Draw Mode state (Free test vs. Constrained official)
+  const [showDrawModeModal, setShowDrawModeModal] = useState(false);
+  const [pendingDrawMode, setPendingDrawMode] = useState<"free" | "constrained" | null>(null);
+  const [isSwitchingMode, setIsSwitchingMode] = useState(false);
 
   // Authenticate Admin
   const handleLogin = async (e: React.FormEvent) => {
@@ -362,6 +368,36 @@ export default function AdminDashboardPage() {
       setActionErrorMsg("Network error resetting participant.");
     } finally {
       setIsResettingParticipant(false);
+    }
+  };
+
+  // Switch Draw Mode (Free Test Mode vs. Constrained Official Mode)
+  const handleSwitchDrawMode = async (mode: "free" | "constrained") => {
+    setIsSwitchingMode(true);
+    setActionSuccessMsg(null);
+    setActionErrorMsg(null);
+    try {
+      const res = await fetch("/api/admin/draw-mode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(password ? { "x-admin-password": password } : {}),
+        },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setActionErrorMsg(data.error || "Failed to switch draw mode.");
+        return;
+      }
+      setActionSuccessMsg(data.message || `Switched draw mode to ${mode}.`);
+      setShowDrawModeModal(false);
+      setPendingDrawMode(null);
+      await fetchAdminData();
+    } catch {
+      setActionErrorMsg("Network connection error switching draw mode.");
+    } finally {
+      setIsSwitchingMode(false);
     }
   };
 
@@ -797,6 +833,139 @@ export default function AdminDashboardPage() {
                   {state.registeredDevicesCount}
                 </p>
                 <p className="mt-1 text-[11px] text-sky-200/70">Bound hardware identifiers</p>
+              </div>
+            </div>
+
+            {/* ===============================================================
+                RULES & DRAW MODE SELECTOR (Free Demo vs. Constrained Official)
+               =============================================================== */}
+            <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-amber-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/20 to-emerald-600/30 text-amber-300 shadow-lg">
+                    <Sparkles className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-serif text-lg font-bold text-white flex items-center gap-2">
+                      <span>نظام وقواعد القرعة (Secret Santa Rules Mode)</span>
+                    </h3>
+                    <p className="text-xs text-emerald-200/80">
+                      التحكم في تفعيل أو إلغاء الشروط والمجموعات الخاصة للاختبار أو الحفل الرسمي
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {state.drawMode === "free" ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/60 bg-sky-950/80 px-3.5 py-1 text-xs font-bold text-sky-200 shadow-sm">
+                      <span className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
+                      <span>الوضع العادي (بدون شروط - وضع التجربة)</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-950/80 px-3.5 py-1 text-xs font-bold text-emerald-200 shadow-sm">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                      <span>الوضع الرسمي (مفعل بالشروط الخاصة)</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Option 1: Constrained Mode */}
+                <div
+                  className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
+                    state.drawMode !== "free"
+                      ? "border-emerald-400/80 bg-emerald-950/40 shadow-lg ring-1 ring-emerald-400/40"
+                      : "border-slate-800 bg-slate-950/40 opacity-70 hover:opacity-100"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-serif text-base font-bold text-emerald-200 flex items-center gap-2">
+                        <span>القرعة المشروطة (الرسمية)</span>
+                        {state.drawMode !== "free" && (
+                          <span className="text-[10px] font-bold uppercase rounded-md bg-emerald-500/20 text-emerald-300 px-2 py-0.5 border border-emerald-500/30">
+                            مفعل حالياً
+                          </span>
+                        )}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-emerald-100/90 leading-relaxed">
+                      يُطبق كافة الشروط الصارمة: عزل المجموعة الخاصة (24 طالباً)، والتوجيهات الإلزامية (Maysoon ➔ Qais، Diana ➔ Mohammad، Ghazal ⇄ George، وعدم تبادل داراوي أو رغد ومحمد).
+                    </p>
+                    <p className="mt-2 text-[11px] text-emerald-300/60">
+                      هذا هو الوضع الرسمي المخصص للحفل الحقيقي.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-emerald-500/20 flex justify-end">
+                    {state.drawMode === "free" ? (
+                      <button
+                        onClick={() => {
+                          setPendingDrawMode("constrained");
+                          setShowDrawModeModal(true);
+                        }}
+                        className="flex items-center gap-1.5 rounded-xl border border-emerald-400/60 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all hover:scale-105 cursor-pointer"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>إعادة تفعيل الشروط والقرعة الرسمية</span>
+                      </button>
+                    ) : (
+                      <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
+                        <Check className="h-4 w-4" />
+                        <span>قواعد الشروط نشطة الآن 100%</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Option 2: Free Mode */}
+                <div
+                  className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
+                    state.drawMode === "free"
+                      ? "border-sky-400/80 bg-sky-950/40 shadow-lg ring-1 ring-sky-400/40"
+                      : "border-slate-800 bg-slate-950/40 opacity-70 hover:opacity-100"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-serif text-base font-bold text-sky-200 flex items-center gap-2">
+                        <span>القرعة العادية (بدون أي شروط)</span>
+                        {state.drawMode === "free" && (
+                          <span className="text-[10px] font-bold uppercase rounded-md bg-sky-500/20 text-sky-300 px-2 py-0.5 border border-sky-500/30">
+                            مفعل حالياً
+                          </span>
+                        )}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-sky-100/90 leading-relaxed">
+                      قرعة حرة وعشوائية بالكامل 100% بين جميع الـ 56 طالباً دون أي استثناءات، لا توجد مجموعات مغلقة ولا هدايا موجهة، والشرط الوحيد ألا يهدي الشخص نفسه.
+                    </p>
+                    <p className="mt-2 text-[11px] text-sky-300/60">
+                      مخصص لتجربة الموقع والاختبار أمام الصف غداً بدون كشف الشروط الحقيقية.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-sky-500/20 flex justify-end">
+                    {state.drawMode !== "free" ? (
+                      <button
+                        onClick={() => {
+                          setPendingDrawMode("free");
+                          setShowDrawModeModal(true);
+                        }}
+                        className="flex items-center gap-1.5 rounded-xl border border-sky-400/60 bg-gradient-to-r from-sky-600 to-sky-700 hover:from-sky-500 hover:to-sky-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all hover:scale-105 cursor-pointer"
+                      >
+                        <Dices className="h-3.5 w-3.5" />
+                        <span>إلغاء الشروط وتفعيل القرعة العادية (للتجربة)</span>
+                      </button>
+                    ) : (
+                      <span className="text-xs text-sky-400 font-medium flex items-center gap-1">
+                        <Check className="h-4 w-4" />
+                        <span>الوضع العادي نشط الآن للتجربة</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1812,6 +1981,81 @@ export default function AdminDashboardPage() {
                         <RotateCcw className="h-3.5 w-3.5" />
                         <span>تأكيد إعادة ضبط هذا العضو</span>
                       </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* ===================================================================
+            DRAW MODE SWITCH CONFIRMATION MODAL
+           =================================================================== */}
+        {showDrawModeModal && pendingDrawMode && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/85 backdrop-blur-md transition-opacity"
+              onClick={() => !isSwitchingMode && setShowDrawModeModal(false)}
+            />
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/40 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3 pb-3 border-b border-amber-500/20 text-amber-300">
+                <Sparkles className="h-6 w-6 text-amber-400 shrink-0" />
+                <h3 className="font-serif text-lg font-bold text-white">
+                  {pendingDrawMode === "free" ? "تفعيل القرعة العادية (بدون شروط)" : "استعادة القرعة المشروطة (الرسمية)"}
+                </h3>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {pendingDrawMode === "free" ? (
+                  <>
+                    <p className="text-xs text-emerald-100 leading-relaxed">
+                      هل أنت متأكد من رغبتك في إلغاء الشروط الخاصة وتفعيل القرعة العادية لاختبار وتجربة الموقع غداً أمام الصف؟
+                    </p>
+                    <div className="rounded-xl border border-sky-500/30 bg-sky-950/40 p-3 text-[11px] text-sky-200/90 space-y-1">
+                      <p>• سيتم توزيع الأسماء عشوائياً 100% بين جميع الـ 56 طالباً دون قيود.</p>
+                      <p>• سيتم حفظ القرعة الرسمية الحالية في نسخة احتياطية آمنة لاستعادتها لاحقاً.</p>
+                      <p>• سيتم تصفير رموز الدخول لتمكين الطلاب من التجربة المباشرة.</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-emerald-100 leading-relaxed">
+                      هل أنت متأكد من استعادة وتفعيل الشروط الخاصة والقرعة الرسمية؟
+                    </p>
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-[11px] text-emerald-200/90 space-y-1">
+                      <p>• ستتم استعادة كافة القواعد الخاصة والشروط الموجهة ومجموعة الـ 24 طالباً.</p>
+                      <p>• سيتم تصفير الرموز ليكون الموقع جاهزاً للحدث الرسمي الحقيقي.</p>
+                    </div>
+                  </>
+                )}
+
+                <div className="pt-3 flex justify-end gap-2.5 border-t border-amber-500/20">
+                  <button
+                    type="button"
+                    onClick={() => setShowDrawModeModal(false)}
+                    disabled={isSwitchingMode}
+                    className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchDrawMode(pendingDrawMode)}
+                    disabled={isSwitchingMode}
+                    className={`flex items-center gap-1.5 rounded-xl border px-5 py-2 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50 ${
+                      pendingDrawMode === "free"
+                        ? "border-sky-400/50 bg-sky-700 hover:bg-sky-600"
+                        : "border-emerald-400/50 bg-emerald-700 hover:bg-emerald-600"
+                    }`}
+                  >
+                    {isSwitchingMode ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>جاري تطبيق التغيير...</span>
+                      </>
+                    ) : (
+                      <span>تأكيد تفعيل هذا الوضع</span>
                     )}
                   </button>
                 </div>

@@ -17,6 +17,8 @@ import {
   generateConstrainedSecretSantaDraw,
   generateSubgroup20Pairs,
   validateConstrainedSecretSantaDraw,
+  generateSecretSantaDerangement,
+  validateDerangement,
   SUBGROUP_20_ID_SET,
   SUBGROUP_20_IDS,
   MANDATORY_RECIPROCAL_A,
@@ -64,6 +66,9 @@ export interface EventState {
   adminPasswordHash?: string;
   adminPasswordSalt?: string;
   adminPasskeys?: AdminPasskey[];
+  drawMode?: "constrained" | "free";
+  savedOfficialParticipants?: StoredParticipant[];
+  savedOfficialMasterSalt?: string;
 }
 
 export interface ParticipantRuntimeState {
@@ -825,7 +830,8 @@ export interface AdminAuditLogEntry {
     | "GIFT_REVEALED"
     | "REGISTER_PASSKEY"
     | "DELETE_PASSKEY"
-    | "AUTH_PASSKEY_LOGIN";
+    | "AUTH_PASSKEY_LOGIN"
+    | "SET_DRAW_MODE";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -836,6 +842,7 @@ export interface AdminAuditLogEntry {
 export interface AdminSafeState {
   status: string;
   version: number;
+  drawMode: "constrained" | "free";
   createdAt: string;
   generatedAt: string | null;
   totalParticipants: number;
@@ -924,6 +931,7 @@ export async function getAdminSafeState(): Promise<AdminSafeState> {
   return {
     status: state.status,
     version: state.version || 7,
+    drawMode: state.drawMode || "constrained",
     createdAt: state.createdAt,
     generatedAt: state.generatedAt,
     totalParticipants: state.participants.length,
@@ -1795,6 +1803,12 @@ export async function rerollSubgroup20(
 }> {
   const state = await getEventState(true);
 
+  if (state.drawMode === "free") {
+    throw new Error(
+      "لا يمكن خلط المجموعة الخاصة لأن القرعة حالياً في الوضع العادي (Free Mode). يرجى تفعيل وضع الشروط أولاً."
+    );
+  }
+
   // 1. Create automatic timestamped backup before any modification
   const timestamp = Date.now();
   const backupBlobKey = `secret-santa-event.backup-pre-reroll-sub20-${timestamp}.json`;
@@ -1989,10 +2003,16 @@ export async function regenerateFullDraw(
     // ignore
   }
 
-  // 2. Generate constrained draw for all participants
-  const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+  // 2. Generate draw according to active mode (free or constrained)
+  const isFree = state.drawMode === "free";
+  const pairs = isFree
+    ? generateSecretSantaDerangement(PARTICIPANTS)
+    : generateConstrainedSecretSantaDraw(PARTICIPANTS);
 
-  const validation = validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
+  const validation = isFree
+    ? validateDerangement(PARTICIPANTS, pairs)
+    : validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
+
   if (!validation.valid) {
     throw new Error(`Draw validation failed: ${validation.reason}`);
   }
@@ -2063,5 +2083,203 @@ export async function regenerateFullDraw(
     message: `Full draw successfully regenerated for all ${PARTICIPANTS.length} participants. New Round ${newVersion} is now active.`,
     version: newVersion,
     backupBlobKey,
+  };
+}
+
+/**
+ * Toggles between Constrained Mode (official holiday rules & subgroup) and Free Mode (unconstrained pure derangement).
+ * When switching to Free mode: stashes official constrained assignments so they are never lost.
+ * When switching back to Constrained mode: restores or regenerates with all mandatory rules intact.
+ */
+export async function setDrawMode(
+  targetMode: "constrained" | "free",
+  clientIp: string = "unknown"
+): Promise<{ success: boolean; mode: "constrained" | "free"; version: number; message: string }> {
+  const state = await getEventState(true);
+  const currentMode = state.drawMode || "constrained";
+
+  const timestamp = Date.now();
+  const backupBlobKey = `secret-santa-event.backup-pre-mode-${targetMode}-${timestamp}.json`;
+  const backupSerialized = JSON.stringify(state, null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(backupBlobKey, backupSerialized, {
+        access: "private",
+        addRandomSuffix: false,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.warn("Notice: backup in Blob:", err);
+    }
+  }
+
+  const newVersion = (state.version || 7) + 1;
+  const newDeviceResetVersion = (state.deviceResetVersion || 1) + 1;
+
+  if (targetMode === "free") {
+    // 1. If currently constrained, stash official participants & masterSalt safely
+    if (currentMode === "constrained" && state.participants.length === PARTICIPANTS.length) {
+      state.savedOfficialParticipants = JSON.parse(JSON.stringify(state.participants));
+      state.savedOfficialMasterSalt = state.masterSalt;
+    }
+
+    // 2. Generate a pure unconstrained random derangement across all 56 participants
+    const pairs = generateSecretSantaDerangement(PARTICIPANTS);
+    const newMasterSalt = crypto.randomBytes(16).toString("hex");
+
+    const newParticipantsState = PARTICIPANTS.map((p) => {
+      const pair = pairs.find((a) => a.giverId === p.id)!;
+      const code = generateChristmasPasscode();
+      const codeHash = hashPasscode(code, newMasterSalt);
+      const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
+
+      return {
+        id: p.id,
+        name: p.name,
+        code,
+        codeHash,
+        encryptedRecipient,
+        isRevealed: false,
+        revealedAt: null,
+        pinHash: null,
+        pinSalt: null,
+        encryptedWithPin: false,
+      };
+    });
+
+    state.version = newVersion;
+    state.deviceResetVersion = newDeviceResetVersion;
+    state.drawMode = "free";
+    state.generatedAt = new Date().toISOString();
+    state.masterSalt = newMasterSalt;
+    state.participants = newParticipantsState;
+  } else {
+    // targetMode === "constrained"
+    state.drawMode = "constrained";
+    state.version = newVersion;
+    state.deviceResetVersion = newDeviceResetVersion;
+    state.generatedAt = new Date().toISOString();
+
+    if (
+      state.savedOfficialParticipants &&
+      state.savedOfficialParticipants.length === PARTICIPANTS.length &&
+      state.savedOfficialMasterSalt
+    ) {
+      // Restore official saved participants with reset PINs and reveal status
+      state.masterSalt = state.savedOfficialMasterSalt;
+      state.participants = state.savedOfficialParticipants.map((p) => ({
+        ...p,
+        isRevealed: false,
+        revealedAt: null,
+        pinHash: null,
+        pinSalt: null,
+        encryptedWithPin: false,
+      }));
+    } else {
+      // Re-generate constrained draw
+      const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+      const newMasterSalt = crypto.randomBytes(16).toString("hex");
+      state.masterSalt = newMasterSalt;
+      state.participants = PARTICIPANTS.map((p) => {
+        const pair = pairs.find((a) => a.giverId === p.id)!;
+        const code = generateChristmasPasscode();
+        const codeHash = hashPasscode(code, newMasterSalt);
+        const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
+
+        return {
+          id: p.id,
+          name: p.name,
+          code,
+          codeHash,
+          encryptedRecipient,
+          isRevealed: false,
+          revealedAt: null,
+          pinHash: null,
+          pinSalt: null,
+          encryptedWithPin: false,
+        };
+      });
+    }
+  }
+
+  // Clear in-memory caches
+  runtimeParticipantCache.clear();
+  revealedParticipantIds.clear();
+  registeredParticipantIds.clear();
+  deviceBindingCache.clear();
+  lastMarkersSyncTimestamp = 0;
+
+  // Clear Blob markers and device locks
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      for (const prefix of [
+        "v7/devices/",
+        "v7/participant_devices/",
+        "v7/revealed/",
+        "v7/registered/",
+      ]) {
+        const listRes = await list({
+          prefix,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+        if (listRes.blobs.length > 0) {
+          await del(
+            listRes.blobs.map((b) => b.url),
+            { token: process.env.BLOB_READ_WRITE_TOKEN }
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Notice: reset in Blob:", err);
+    }
+  }
+
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          fs.unlinkSync(path.join(dir, f));
+        }
+      }
+    }
+    const localDir = path.dirname(getStorageFilePath());
+    const revealedDir = path.join(localDir, "v7_revealed");
+    const registeredDir = path.join(localDir, "v7_registered");
+    if (fs.existsSync(revealedDir)) {
+      fs.rmSync(revealedDir, { recursive: true, force: true });
+    }
+    if (fs.existsSync(registeredDir)) {
+      fs.rmSync(registeredDir, { recursive: true, force: true });
+    }
+  } catch {
+    // ignore
+  }
+
+  await saveEventState(state);
+
+  const actionDetails =
+    targetMode === "free"
+      ? "Switched to Free Draw Mode (Test Mode). All special rules disabled for demo."
+      : "Restored Constrained Draw Mode. All special rules (Subgroup 24, directed pairs) active.";
+
+  await recordAdminAuditLog({
+    action: "SET_DRAW_MODE",
+    actionLabel: targetMode === "free" ? "Enable Free Mode (Test)" : "Restore Constrained Rules",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `${actionDetails} Advanced to Round ${newVersion}. Backup: ${backupBlobKey}`,
+  });
+
+  return {
+    success: true,
+    mode: targetMode,
+    version: newVersion,
+    message:
+      targetMode === "free"
+        ? "تم تفعيل القرعة العادية (بدون شروط) بنجاح. يمكن للطلاب الآن تجربة الموقع واستلام أسماء عشوائية بالكامل دون قيود."
+        : "تمت استعادة وتفعيل شروط القرعة الخاصة بنجاح. جميع القواعد والمجموعات الخاصة مفعلة الآن 100%.",
   };
 }
