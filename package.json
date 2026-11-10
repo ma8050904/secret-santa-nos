@@ -10,6 +10,7 @@
     "test": "STORAGE_FILE_PATH=/tmp/test-secret-santa.json tsx test/verify-secret-santa.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^14.1.0",
     "@vercel/blob": "^2.8.2",

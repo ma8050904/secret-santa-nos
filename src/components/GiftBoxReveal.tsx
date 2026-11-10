@@ -123,6 +123,12 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
       return;
     }
 
+    // Safety watchdog: hard 7s cap to ensure UI never stays stuck on "Opening your gift..."
+    const watchdog = setTimeout(() => {
+      setError("Opening took longer than expected. Please tap to try again.");
+      setStage("ready_to_open");
+    }, 7000);
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -141,6 +147,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
       });
 
       clearTimeout(timeoutId);
+      clearTimeout(watchdog);
       const data = await res.json();
 
       if (!res.ok || !data.success) {
@@ -157,6 +164,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         onRevealSuccess(participant.id);
       }, 450);
     } catch {
+      clearTimeout(watchdog);
       setError("Connection timed out. Please tap below to try again.");
       setStage("ready_to_open");
     }

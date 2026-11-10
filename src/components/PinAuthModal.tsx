@@ -139,7 +139,14 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
       const optData = await optRes.json();
       if (!optRes.ok || !optData.success) {
-        if (optRes.status === 403 || String(optData.error || "").includes("officially registered")) {
+        if (optData.requiresPinRecovery) {
+          setIsBiometricLoading(false);
+          setActiveTab("pin");
+          setError(optData.error || "Please enter your 4-digit PIN to unlock.");
+          setTimeout(() => pinInputRef.current?.focus(), 50);
+          return;
+        }
+        if (optRes.status === 403 && String(optData.error || "").includes("officially registered")) {
           setError(optData.error || "This device is registered to another participant.");
           setIsDeviceBlocked(true);
           return;
@@ -148,10 +155,23 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       }
 
       // Step 2: Trigger platform authenticator (Face ID / Touch ID / Device Passcode)
+      // Defense-in-depth: Ensure all credential IDs are strictly valid Base64URL before passing to WebAuthn browser decoder
+      const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
       let clientResponse: any;
+
       if (optData.mode === "authenticate") {
+        if (optData.options?.allowCredentials && Array.isArray(optData.options.allowCredentials)) {
+          optData.options.allowCredentials = optData.options.allowCredentials.filter(
+            (c: any) => c && typeof c.id === "string" && BASE64URL_REGEX.test(c.id.trim())
+          );
+        }
         clientResponse = await startAuthentication({ optionsJSON: optData.options });
       } else {
+        if (optData.options?.excludeCredentials && Array.isArray(optData.options.excludeCredentials)) {
+          optData.options.excludeCredentials = optData.options.excludeCredentials.filter(
+            (c: any) => c && typeof c.id === "string" && BASE64URL_REGEX.test(c.id.trim())
+          );
+        }
         clientResponse = await startRegistration({ optionsJSON: optData.options });
       }
 
@@ -229,9 +249,19 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           pinInputRef.current?.focus();
         }, 50);
       } else {
-        // Unexpected error -> switch to PIN with clear feedback
+        // Unexpected error -> switch to PIN with clear, user-friendly feedback
         setActiveTab("pin");
-        setError(err?.message || "Biometric verification failed. Please enter your 4-digit PIN.");
+        const rawMsg = String(err?.message || "");
+        if (
+          rawMsg.includes("invalid characters") ||
+          rawMsg.includes("DOMException") ||
+          rawMsg.includes("atob") ||
+          rawMsg.includes("failed to execute")
+        ) {
+          setError("Biometric setup issue. Please enter your 4-digit PIN instead.");
+        } else {
+          setError(err?.message || "Biometric verification failed. Please enter your 4-digit PIN.");
+        }
         setTimeout(() => {
           pinInputRef.current?.focus();
         }, 50);

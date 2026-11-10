@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revealRecipientWithPin, revealRecipientWithBiometric, getDeviceOrHardwareBinding, recordDeviceReveal } from "@/lib/storage";
 import { getSessionFromRequest, getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
-import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { checkDistributedRateLimit, resetDistributedRateLimit } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `reveal:${ip}:${participantId}`;
-    const rateCheck = checkRateLimit(rateLimitKey);
+    const rateCheck = await checkDistributedRateLimit(rateLimitKey);
 
     if (!rateCheck.allowed) {
       return NextResponse.json(
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    resetRateLimit(rateLimitKey);
+    await resetDistributedRateLimit(rateLimitKey);
 
     const userAgent = req.headers.get("user-agent") || "";
     recordDeviceReveal(deviceId, participantId, { ip, userAgent }).catch((err) =>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateOrRegisterPin, getDeviceOrHardwareBinding, bindDeviceToParticipant } from "@/lib/storage";
-import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { checkDistributedRateLimit, resetDistributedRateLimit } from "@/lib/db";
 import {
   setSessionCookie,
   setDeviceCookie,
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `${ip}:${participantId}`;
-    const rateCheck = checkRateLimit(rateLimitKey);
+    const rateCheck = await checkDistributedRateLimit(rateLimitKey);
 
     if (!rateCheck.allowed) {
       return NextResponse.json(
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Successful authentication / registration: reset rate limiter
-    resetRateLimit(rateLimitKey);
+    await resetDistributedRateLimit(rateLimitKey);
 
     const response = NextResponse.json({
       success: true,

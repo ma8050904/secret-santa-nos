@@ -9,6 +9,7 @@ import {
   authenticateParticipantBiometric,
   bindDeviceToParticipant,
   getDeviceOrHardwareBinding,
+  isValidPasskeyCredentialId,
 } from "@/lib/storage";
 import { getWebAuthnRpDetails } from "@/lib/admin-auth";
 import {
@@ -73,6 +74,18 @@ export async function POST(req: NextRequest) {
       // ----------------------------------------------------
       // REGISTRATION VERIFICATION
       // ----------------------------------------------------
+      // Block duplicate registration if participant already has a registered passkey
+      const existingStatus = await getParticipantBiometricStatus(participantId);
+      if (existingStatus.hasPasskey) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "A biometric passkey is already registered for this participant. Duplicate registration is blocked.",
+          },
+          { status: 403 }
+        );
+      }
+
       const verification = await verifyRegistrationResponse({
         response: clientResponse,
         expectedChallenge,
@@ -89,6 +102,12 @@ export async function POST(req: NextRequest) {
       }
 
       const { credential } = verification.registrationInfo;
+      if (!isValidPasskeyCredentialId(credential.id)) {
+        return NextResponse.json(
+          { success: false, error: "Invalid credential ID received from device authenticator." },
+          { status: 400 }
+        );
+      }
 
       const result = await registerParticipantBiometric(participantId, {
         id: credential.id,
@@ -154,7 +173,7 @@ export async function POST(req: NextRequest) {
         credential: {
           id: status.passkeyCredentialId,
           publicKey: Buffer.from(status.passkeyPublicKey, "base64url"),
-          counter: 0,
+          counter: status.passkeyCounter ?? 0,
         },
         requireUserVerification: true,
       });
@@ -166,7 +185,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const result = await authenticateParticipantBiometric(participantId);
+      const newCounter = verification.authenticationInfo?.newCounter;
+      const result = await authenticateParticipantBiometric(participantId, newCounter);
       if (!result.success || !result.participant) {
         return NextResponse.json(
           { success: false, error: result.error || "Authentication failed." },

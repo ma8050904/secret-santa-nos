@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { put, list, get, del } from "@vercel/blob";
 import { PARTICIPANTS } from "./constants";
 import { parseUserAgentDetails } from "./device-info";
+import { clearAllRateLimits } from "./rate-limit";
 import {
   generateChristmasPasscode,
   hashPasscode,
@@ -191,6 +192,18 @@ const KNOWN_BLOB_URL =
   process.env.BLOB_URL || `${KNOWN_BLOB_BASE}/secret-santa-event.json`;
 
 let writeLock: Promise<void> = Promise.resolve();
+let activeResetCount = 0;
+
+/**
+ * Returns true while an administrative draw regeneration or security reset is actively executing.
+ * Used to block concurrent participant authentication, enrollment, device binding, or reveal calls.
+ */
+export function isDrawResetInProgress(): boolean {
+  return activeResetCount > 0;
+}
+
+const RESET_IN_PROGRESS_ERROR =
+  "Event draw regeneration and security reset is currently in progress. Please wait a moment and try again.";
 
 // Concurrency-safe in-memory runtime caches
 const runtimeParticipantCache = new Map<string, ParticipantRuntimeState>();
@@ -396,9 +409,6 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
           if (registeredParticipantIds.has(p.id)) {
             p.pinHash = p.pinHash || "registered_marker_present";
           }
-          if (passkeyParticipantIds.has(p.id)) {
-            p.passkeyCredentialId = p.passkeyCredentialId || "passkey_marker_present";
-          }
         }
 
         inMemoryStateCache = parsed;
@@ -427,9 +437,6 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
         }
         if (registeredParticipantIds.has(p.id)) {
           p.pinHash = p.pinHash || "registered_marker_present";
-        }
-        if (passkeyParticipantIds.has(p.id)) {
-          p.passkeyCredentialId = p.passkeyCredentialId || "passkey_marker_present";
         }
       }
 
@@ -782,6 +789,9 @@ export async function authenticateOrRegisterPin(
   };
   recipientName?: string;
 }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   const pin = rawPin ? rawPin.trim() : "";
   if (!pin) {
     return { success: false, error: "Please enter your PIN." };
@@ -935,6 +945,9 @@ export async function revealRecipientWithPin(
   isFirstReveal?: boolean;
   error?: string;
 }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   const runtime = await getParticipantRuntimeState(participantId);
 
   if (!runtime || !runtime.encryptedRecipient || !runtime.pinHash || !runtime.pinSalt) {
@@ -986,22 +999,26 @@ export async function getParticipantBiometricStatus(participantId: string): Prom
   isRevealed: boolean;
   passkeyCredentialId?: string | null;
   passkeyPublicKey?: string | null;
+  passkeyCounter: number;
   name: string;
 }> {
   const runtime = await getParticipantRuntimeState(participantId);
   const masterState = await getEventState();
   const p = masterState.participants.find((item) => item.id === participantId);
-  const hasPasskey = Boolean(
-    runtime?.passkeyCredentialId ||
-    p?.passkeyCredentialId ||
-    passkeyParticipantIds.has(participantId)
-  );
+
+  const rawCredId = (runtime?.passkeyCredentialId || p?.passkeyCredentialId || "").trim();
+  const validCredId = isValidPasskeyCredentialId(rawCredId) ? rawCredId : null;
+  const rawPubKey = (runtime?.passkeyPublicKey || p?.passkeyPublicKey || "").trim();
+  const validPubKey = rawPubKey.length > 0 && validCredId ? rawPubKey : null;
+  const counter = Number(runtime?.passkeyCounter ?? p?.passkeyCounter ?? 0);
+
   return {
-    hasPasskey,
+    hasPasskey: Boolean(validCredId),
     hasPin: Boolean(runtime?.pinHash || p?.pinHash),
     isRevealed: Boolean(runtime?.isRevealed || p?.isRevealed),
-    passkeyCredentialId: runtime?.passkeyCredentialId || p?.passkeyCredentialId || null,
-    passkeyPublicKey: runtime?.passkeyPublicKey || p?.passkeyPublicKey || null,
+    passkeyCredentialId: validCredId,
+    passkeyPublicKey: validPubKey,
+    passkeyCounter: counter,
     name: runtime?.name || p?.name || participantId,
   };
 }
@@ -1018,10 +1035,24 @@ export async function registerParticipantBiometric(
   participant?: { id: string; name: string; isRevealed: boolean };
   recipientName?: string;
 }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   const masterState = await getEventState();
   const participant = masterState.participants.find((p) => p.id === participantId);
   if (!participant) {
     return { success: false, error: "Participant not found." };
+  }
+
+  // Prevent duplicate registration or unauthorized overwrite of an existing valid passkey
+  const existingRuntime = await getParticipantRuntimeState(participantId);
+  const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
+  const existingCredId = (existingRuntime?.passkeyCredentialId || participant.passkeyCredentialId || "").trim();
+  if (existingCredId && BASE64URL_REGEX.test(existingCredId) && existingCredId !== credential.id) {
+    return {
+      success: false,
+      error: "A biometric passkey is already registered for this participant. Duplicate registration is blocked.",
+    };
   }
 
   let originalRecipient = "";
@@ -1039,7 +1070,7 @@ export async function registerParticipantBiometric(
     return { success: false, error: "Could not initialize assignment." };
   }
 
-  const runtime = (await getParticipantRuntimeState(participantId)) || {
+  const runtime = existingRuntime || {
     participantId: participant.id,
     name: participant.name,
     encryptedRecipient: participant.encryptedRecipient,
@@ -1071,13 +1102,17 @@ export async function registerParticipantBiometric(
  * Authenticates a participant using their registered biometric credential.
  */
 export async function authenticateParticipantBiometric(
-  participantId: string
+  participantId: string,
+  newCounter?: number
 ): Promise<{
   success: boolean;
   error?: string;
   participant?: { id: string; name: string; isRevealed: boolean };
   recipientName?: string;
 }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   const masterState = await getEventState();
   const participant = masterState.participants.find((p) => p.id === participantId);
   if (!participant) {
@@ -1087,6 +1122,12 @@ export async function authenticateParticipantBiometric(
   const runtime = await getParticipantRuntimeState(participantId);
   if (!runtime || !runtime.passkeyCredentialId) {
     return { success: false, error: "No biometric passkey registered for this participant." };
+  }
+
+  // Update anti-replay counter if provided by authenticator verification
+  if (typeof newCounter === "number") {
+    runtime.passkeyCounter = newCounter;
+    await saveParticipantRuntimeState(runtime);
   }
 
   let recipientName: string | undefined;
@@ -1122,6 +1163,9 @@ export async function revealRecipientWithBiometric(
   isFirstReveal?: boolean;
   error?: string;
 }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   const masterState = await getEventState();
   const participant = masterState.participants.find((p) => p.id === participantId);
   if (!participant) {
@@ -1129,6 +1173,18 @@ export async function revealRecipientWithBiometric(
   }
 
   const runtime = await getParticipantRuntimeState(participantId);
+  const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
+  const rawCredId = (runtime?.passkeyCredentialId || participant.passkeyCredentialId || "").trim();
+  const hasPasskey = BASE64URL_REGEX.test(rawCredId);
+  const hasPin = Boolean(runtime?.pinHash || participant.pinHash);
+
+  if (!hasPasskey && !hasPin) {
+    return {
+      success: false,
+      error: "Authentication session expired due to event reset. Please enroll again.",
+    };
+  }
+
   const activeRuntime: ParticipantRuntimeState = runtime || {
     participantId: participant.id,
     name: participant.name,
@@ -1480,15 +1536,39 @@ export async function getDeviceOrHardwareBinding(
 }
 
 /**
+ * Strictly validates whether a credential ID is a valid Base64URL passkey identifier.
+ * Excludes legacy marker strings and malformed values to prevent atob DOMExceptions.
+ */
+export function isValidPasskeyCredentialId(id: unknown): id is string {
+  if (typeof id !== "string") return false;
+  const trimmed = id.trim();
+  if (
+    trimmed === "passkey_marker_present" ||
+    trimmed === "registered" ||
+    trimmed === "true" ||
+    trimmed.includes(" ")
+  ) {
+    return false;
+  }
+  return /^[A-Za-z0-9_-]{16,}$/.test(trimmed);
+}
+
+/**
  * Returns all WebAuthn passkey credential IDs currently registered across all participants.
  * Used for excludeCredentials to hardware-lock platform authenticators (Touch ID / Face ID / Secure Enclave).
  */
 export async function getAllRegisteredPasskeyCredentials(): Promise<string[]> {
   await syncMarkers();
-  const creds = new Set<string>(allRegisteredCredentialIdsSet);
+  const creds = new Set<string>();
+
+  for (const id of allRegisteredCredentialIdsSet) {
+    if (isValidPasskeyCredentialId(id)) {
+      creds.add(id.trim());
+    }
+  }
 
   for (const [, p] of runtimeParticipantCache) {
-    if (p.passkeyCredentialId && p.passkeyCredentialId.trim().length > 0) {
+    if (isValidPasskeyCredentialId(p.passkeyCredentialId)) {
       creds.add(p.passkeyCredentialId.trim());
     }
   }
@@ -1496,7 +1576,7 @@ export async function getAllRegisteredPasskeyCredentials(): Promise<string[]> {
   try {
     const state = await getEventState();
     for (const p of state.participants) {
-      if (p.passkeyCredentialId && p.passkeyCredentialId.trim().length > 0) {
+      if (isValidPasskeyCredentialId(p.passkeyCredentialId)) {
         creds.add(p.passkeyCredentialId.trim());
       }
     }
@@ -1517,9 +1597,19 @@ export async function bindDeviceToParticipant(
   participantName: string,
   meta?: { ip?: string; userAgent?: string; hardwareFingerprint?: string }
 ): Promise<{ success: boolean; error?: string }> {
+  if (isDrawResetInProgress()) {
+    return { success: false, error: RESET_IN_PROGRESS_ERROR };
+  }
   if (!deviceId || typeof deviceId !== "string") {
     return { success: false, error: "Invalid device identifier." };
   }
+
+  // If transactional PostgreSQL database is configured, enforce atomic uniqueness constraints in Postgres
+  const { isPostgresConfigured, atomicBindDeviceToParticipant } = await import("./db");
+  if (isPostgresConfigured()) {
+    return atomicBindDeviceToParticipant(deviceId, participantId, participantName, meta);
+  }
+
   const cleanId = deviceId.trim().toLowerCase();
   const cleanHwFp = meta?.hardwareFingerprint?.trim().toLowerCase();
 
@@ -2076,118 +2166,164 @@ export async function resetAllDeviceBindings(
 }
 
 /**
- * Full Event Reset: Clears all participant PINs, reveal statuses, and device bindings,
+ * Full Event Reset: Clears all participant PINs, reveal statuses, passkeys, and device bindings,
  * advancing the round version (invalidating old cookies/sessions) while preserving all 56
  * Secret Santa assignments byte-for-byte with their constraints.
  */
 export async function fullEventReset(
   clientIp: string = "unknown"
 ): Promise<{ success: boolean; message: string; version: number }> {
-  const state = await getEventState(true);
-
-  // 1. Create timestamped backup
-  const timestamp = Date.now();
-  const backupBlobKey = `secret-santa-event.backup-pre-full-reset-${timestamp}.json`;
-  const backupSerialized = JSON.stringify(state, null, 2);
-
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      await put(backupBlobKey, backupSerialized, {
-        access: "private",
-        addRandomSuffix: false,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-    } catch (err) {
-      console.warn("Notice: backup in Blob:", err);
-    }
+  if (isDrawResetInProgress()) {
+    throw new Error(RESET_IN_PROGRESS_ERROR);
   }
 
-  // 2. Clear all participants' PINs and reveal status
-  state.participants.forEach((p) => {
-    p.pinHash = null;
-    p.pinSalt = null;
-    p.encryptedWithPin = false;
-    p.isRevealed = false;
-    p.revealedAt = null;
-  });
+  activeResetCount++;
+  try {
+    const state = await getEventState(true);
 
-  // 3. Increment version to invalidate all active session tokens and device bindings
-  state.version = (state.version ?? 0) + 1;
-  state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
+    // 1. Create timestamped backup
+    const timestamp = Date.now();
+    const backupBlobKey = `secret-santa-event.backup-pre-full-reset-${timestamp}.json`;
+    const backupSerialized = JSON.stringify(state, null, 2);
 
-  // Clear in-memory caches
-  inMemoryStateCache = null;
-  runtimeParticipantCache.clear();
-  revealedParticipantIds.clear();
-  registeredParticipantIds.clear();
-  passkeyParticipantIds.clear();
-  deviceBindingCache.clear();
-  lastMarkersSyncTimestamp = 0;
+    const localBackupDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
+    const backupFilePath = path.join(localBackupDir, backupBlobKey);
+    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
+    if (!fs.existsSync(backupFilePath) || fs.statSync(backupFilePath).size < 1000) {
+      throw new Error("Pre-reset backup verification failed. Operation aborted for safety.");
+    }
 
-  // 4. Clear all device bindings and markers from Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      for (const prefix of [
-        "v7/devices/",
-        "v7/participant_devices/",
-        "v7/revealed/",
-        "v7/registered/",
-        "v7/passkeys/",
-      ]) {
-        const listRes = await list({
-          prefix,
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await put(backupBlobKey, backupSerialized, {
+          access: "private",
+          addRandomSuffix: false,
           token: process.env.BLOB_READ_WRITE_TOKEN,
         });
-        if (listRes.blobs.length > 0) {
-          await del(
-            listRes.blobs.map((b) => b.url),
-            { token: process.env.BLOB_READ_WRITE_TOKEN }
-          );
-        }
-      }
-    } catch (err) {
-      console.warn("Notice: reset in Blob:", err);
-    }
-  }
-
-  try {
-    const dir = getLocalDeviceDir();
-    if (fs.existsSync(dir)) {
-      const files = fs.readdirSync(dir);
-      for (const f of files) {
-        if (f.endsWith(".json")) {
-          fs.unlinkSync(path.join(dir, f));
-        }
+      } catch (err) {
+        console.warn("Notice: backup in Blob:", err);
       }
     }
-    const localDir = path.dirname(getStorageFilePath());
-    const revealedDir = path.join(localDir, "v7_revealed");
-    const registeredDir = path.join(localDir, "v7_registered");
-    if (fs.existsSync(revealedDir)) {
-      fs.rmSync(revealedDir, { recursive: true, force: true });
+
+    // 2. Clear all participants' PINs, passkeys, and reveal status
+    state.participants.forEach((p) => {
+      p.pinHash = null;
+      p.pinSalt = null;
+      p.encryptedWithPin = false;
+      p.isRevealed = false;
+      p.revealedAt = null;
+      p.passkeyCredentialId = null;
+      p.passkeyPublicKey = null;
+      p.passkeyCounter = 0;
+      p.passkeyRegisteredAt = null;
+    });
+
+    // 3. Increment version to invalidate all active session tokens and device bindings
+    state.version = (state.version ?? 0) + 1;
+    state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
+
+    // 4. Save state atomically BEFORE clearing runtime files/caches
+    await saveEventState(state);
+
+    // 5. Clear in-memory caches & rate limits
+    inMemoryStateCache = null;
+    runtimeParticipantCache.clear();
+    revealedParticipantIds.clear();
+    registeredParticipantIds.clear();
+    passkeyParticipantIds.clear();
+    deviceBindingCache.clear();
+    hardwareBindingCache.clear();
+    allRegisteredCredentialIdsSet.clear();
+    lastMarkersSyncTimestamp = 0;
+    clearAllRateLimits();
+
+    // 6. Clear all device bindings and markers from Blob
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        for (const prefix of [
+          "v7/devices/",
+          "v7/hardware_devices/",
+          "v7/participant_devices/",
+          "v7/revealed/",
+          "v7/registered/",
+          "v7/passkeys/",
+          "v7/all_passkey_credentials/",
+          "v7/participants/",
+        ]) {
+          const listRes = await list({
+            prefix,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          });
+          if (listRes.blobs.length > 0) {
+            await del(
+              listRes.blobs.map((b) => b.url),
+              { token: process.env.BLOB_READ_WRITE_TOKEN }
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Notice: reset in Blob:", err);
+      }
     }
-    if (fs.existsSync(registeredDir)) {
-      fs.rmSync(registeredDir, { recursive: true, force: true });
+
+    try {
+      const localDir = path.dirname(getStorageFilePath());
+      for (const sub of [
+        "v7_revealed",
+        "v7_registered",
+        "v7_passkeys",
+        "v7_all_passkey_credentials",
+        "v7_participants",
+        "v7_devices",
+        "v7_hardware_devices",
+        "v5_participants",
+        "v5_registered",
+        "v5_revealed",
+      ]) {
+        const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
+        if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
+          fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
+        }
+      }
+      const dir = getLocalDeviceDir();
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(dir, f));
+          }
+        }
+      }
+      const hwDir = getLocalHardwareDeviceDir();
+      if (fs.existsSync(hwDir)) {
+        const files = fs.readdirSync(hwDir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(hwDir, f));
+          }
+        }
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
+
+    await recordAdminAuditLog({
+      action: "RESET_ALL_DEVICES",
+      actionLabel: "Full Event Reset",
+      ip: clientIp,
+      status: "SUCCESS",
+      details: `Full Event Reset executed. All 56 participant PINs, passkeys, reveal states, and device bindings were cleared. Assignments remain 100% intact. Advanced to Round ${state.version}.`,
+    });
+
+    return {
+      success: true,
+      message: `Full Event Reset completed. All participant PINs, passkeys, reveal records, and device locks have been completely reset. Event is now at Round ${state.version}.`,
+      version: state.version,
+    };
+  } finally {
+    activeResetCount--;
   }
-
-  await saveEventState(state);
-
-  await recordAdminAuditLog({
-    action: "RESET_ALL_DEVICES",
-    actionLabel: "Full Event Reset",
-    ip: clientIp,
-    status: "SUCCESS",
-    details: `Full Event Reset executed. All 56 participant PINs, reveal states, and device bindings were cleared. Assignments remain 100% intact. Advanced to Round ${state.version}.`,
-  });
-
-  return {
-    success: true,
-    message: `Full Event Reset completed. All participant PINs, reveal records, and device locks have been completely reset. Event is now at Round ${state.version}.`,
-    version: state.version,
-  };
 }
 
 /**
@@ -2519,243 +2655,84 @@ export async function rerollSubgroup20(
 }
 
 export async function regenerateFullDraw(
-  clientIp: string = "unknown"
+  clientIp: string = "unknown",
+  forcedMode?: "constrained" | "free"
 ): Promise<{
   success: boolean;
   message: string;
   version: number;
   backupBlobKey: string;
 }> {
-  const state = await getEventState(true);
-
-  // 1. Automatic timestamped backup
-  const timestamp = Date.now();
-  const backupBlobKey = `secret-santa-event.backup-pre-full-regenerate-${timestamp}.json`;
-  const backupSerialized = JSON.stringify(state, null, 2);
-
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      await put(backupBlobKey, backupSerialized, {
-        access: "private",
-        addRandomSuffix: false,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-    } catch (err) {
-      console.error("Critical: Failed to create pre-full-regenerate backup in Blob:", err);
-    }
+  if (isDrawResetInProgress()) {
+    throw new Error(RESET_IN_PROGRESS_ERROR);
   }
 
+  activeResetCount++;
   try {
+    const state = await getEventState(true);
+
+    // 1. Automatic timestamped backup with explicit disk verification
+    const timestamp = Date.now();
+    const backupBlobKey = `secret-santa-event.backup-pre-full-regenerate-${timestamp}.json`;
+    const backupSerialized = JSON.stringify(state, null, 2);
+
     const localBackupDir = path.join(process.cwd(), ".data");
     if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
-    fs.writeFileSync(path.join(localBackupDir, backupBlobKey), backupSerialized, "utf-8");
-  } catch {
-    // ignore
-  }
-
-  // 2. Generate draw according to active mode (free or constrained)
-  const isFree = state.drawMode === "free";
-
-  // Build previous assignments map to prevent duplicate consecutive recipients on regenerate
-  const previousAssignmentsMap: Record<string, string> = {};
-  if (state.participants && state.masterSalt) {
-    for (const p of state.participants) {
-      if (p.encryptedRecipient && p.code) {
-        try {
-          const recName = decryptRecipient(p.encryptedRecipient, p.code, state.masterSalt);
-          const recP = PARTICIPANTS.find((x) => x.name === recName);
-          if (recP) {
-            previousAssignmentsMap[p.id] = recP.id;
-          }
-        } catch {
-          // ignore
-        }
-      }
+    const backupFilePath = path.join(localBackupDir, backupBlobKey);
+    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
+    if (!fs.existsSync(backupFilePath) || fs.statSync(backupFilePath).size < 1000) {
+      throw new Error("Pre-regeneration backup verification failed. Operation aborted for safety.");
     }
-  }
 
-  const pairs = isFree
-    ? generateDistinctDerangement(PARTICIPANTS, previousAssignmentsMap)
-    : generateConstrainedSecretSantaDraw(PARTICIPANTS);
-
-  const validation = isFree
-    ? validateDerangement(PARTICIPANTS, pairs)
-    : validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
-
-  if (!validation.valid) {
-    throw new Error(`Draw validation failed: ${validation.reason}`);
-  }
-
-  // 3. Encrypt with new masterSalt
-  const newMasterSalt = crypto.randomBytes(16).toString("hex");
-  const newVersion = (state.version ?? 0) + 1;
-
-  const newParticipantsState = PARTICIPANTS.map((p) => {
-    const pair = pairs.find((a) => a.giverId === p.id)!;
-    const code = generateChristmasPasscode();
-    const codeHash = hashPasscode(code, newMasterSalt);
-    const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
-
-    return {
-      id: p.id,
-      name: p.name,
-      code,
-      codeHash,
-      encryptedRecipient,
-      isRevealed: false,
-      revealedAt: null,
-      pinHash: null,
-      pinSalt: null,
-      encryptedWithPin: false,
-      passkeyCredentialId: null,
-      passkeyPublicKey: null,
-      passkeyCounter: 0,
-      passkeyRegisteredAt: null,
-    };
-  });
-
-  state.version = newVersion;
-  state.status = "active";
-  state.generatedAt = new Date().toISOString();
-  state.masterSalt = newMasterSalt;
-  state.participants = newParticipantsState;
-  state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
-
-  // Clear caches
-  inMemoryStateCache = null;
-  runtimeParticipantCache.clear();
-  revealedParticipantIds.clear();
-  registeredParticipantIds.clear();
-  passkeyParticipantIds.clear();
-  deviceBindingCache.clear();
-  hardwareBindingCache.clear();
-  allRegisteredCredentialIdsSet.clear();
-  lastMarkersSyncTimestamp = 0;
-
-  // Clear local device & marker directories
-  try {
-    const localDir = path.dirname(getStorageFilePath());
-    for (const sub of [
-      "v7_revealed",
-      "v7_registered",
-      "v7_passkeys",
-      "v7_all_passkey_credentials",
-      "v7_participants",
-      "v7_devices",
-      "v7_hardware_devices",
-    ]) {
-      const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
-      if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
-        fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
-      }
-    }
-    const dir = getLocalDeviceDir();
-    if (fs.existsSync(/*turbopackIgnore: true*/ dir)) {
-      const files = fs.readdirSync(/*turbopackIgnore: true*/ dir);
-      for (const f of files) {
-        if (f.endsWith(".json")) {
-          fs.unlinkSync(/*turbopackIgnore: true*/ path.join(dir, f));
-        }
-      }
-    }
-    const hwDir = getLocalHardwareDeviceDir();
-    if (fs.existsSync(/*turbopackIgnore: true*/ hwDir)) {
-      const files = fs.readdirSync(/*turbopackIgnore: true*/ hwDir);
-      for (const f of files) {
-        if (f.endsWith(".json")) {
-          fs.unlinkSync(/*turbopackIgnore: true*/ path.join(hwDir, f));
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  await saveEventState(state);
-
-  // Clean runtime blobs (devices, participant records, but preserve audit logs)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      let hasMore = true;
-      let cursor: string | undefined = undefined;
-      while (hasMore) {
-        const vList: any = await list({
-          prefix: "v7/",
-          cursor,
-          limit: 1000,
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await put(backupBlobKey, backupSerialized, {
+          access: "private",
+          addRandomSuffix: false,
           token: process.env.BLOB_READ_WRITE_TOKEN,
         });
-        const urlsToDelete = vList.blobs
-          .filter((b: any) => !b.pathname.includes("admin_audit_logs"))
-          .map((b: any) => b.url);
-        if (urlsToDelete.length > 0) {
-          await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
-        }
-        hasMore = Boolean(vList.hasMore);
-        cursor = vList.cursor;
+      } catch (err) {
+        console.error("Critical: Failed to create pre-full-regenerate backup in Blob:", err);
       }
-    } catch (err) {
-      console.warn("Notice: cleaning runtime markers in Blob:", err);
-    }
-  }
-
-  await recordAdminAuditLog({
-    action: "REGENERATE_FULL_DRAW",
-    actionLabel: "Regenerate Full Draw",
-    ip: clientIp,
-    status: "SUCCESS",
-    details: `Full draw regenerated for ${PARTICIPANTS.length} participants. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
-  });
-
-  return {
-    success: true,
-    message: `Full draw successfully regenerated for all ${PARTICIPANTS.length} participants. New Round ${newVersion} is now active.`,
-    version: newVersion,
-    backupBlobKey,
-  };
-}
-
-/**
- * Toggles between Constrained Mode (official holiday rules & subgroup) and Free Mode (unconstrained pure derangement).
- * When switching to Free mode: stashes official constrained assignments so they are never lost.
- * When switching back to Constrained mode: restores or regenerates with all mandatory rules intact.
- */
-export async function setDrawMode(
-  targetMode: "constrained" | "free",
-  clientIp: string = "unknown"
-): Promise<{ success: boolean; mode: "constrained" | "free"; version: number; message: string }> {
-  const state = await getEventState(true);
-  const currentMode = state.drawMode || "constrained";
-
-  const timestamp = Date.now();
-  const backupBlobKey = `secret-santa-event.backup-pre-mode-${targetMode}-${timestamp}.json`;
-  const backupSerialized = JSON.stringify(state, null, 2);
-
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      await put(backupBlobKey, backupSerialized, {
-        access: "private",
-        addRandomSuffix: false,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-    } catch (err) {
-      console.warn("Notice: backup in Blob:", err);
-    }
-  }
-
-  const newVersion = (state.version ?? 0) + 1;
-  const newDeviceResetVersion = (state.deviceResetVersion || 1) + 1;
-
-  if (targetMode === "free") {
-    // 1. If currently constrained, stash official participants & masterSalt safely
-    if (currentMode === "constrained" && state.participants.length === PARTICIPANTS.length) {
-      state.savedOfficialParticipants = JSON.parse(JSON.stringify(state.participants));
-      state.savedOfficialMasterSalt = state.masterSalt;
     }
 
-    // 2. Generate a pure unconstrained random derangement across all 56 participants
-    const pairs = generateSecretSantaDerangement(PARTICIPANTS);
+    // 2. Generate draw according to mode (defaults to official constrained mode)
+    const targetMode = forcedMode ?? "constrained";
+    const isFree = targetMode === "free";
+
+    // Build previous assignments map to prevent duplicate consecutive recipients on regenerate
+    const previousAssignmentsMap: Record<string, string> = {};
+    if (state.participants && state.masterSalt) {
+      for (const p of state.participants) {
+        if (p.encryptedRecipient && p.code) {
+          try {
+            const recName = decryptRecipient(p.encryptedRecipient, p.code, state.masterSalt);
+            const recP = PARTICIPANTS.find((x) => x.name === recName);
+            if (recP) {
+              previousAssignmentsMap[p.id] = recP.id;
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    const pairs = isFree
+      ? generateDistinctDerangement(PARTICIPANTS, previousAssignmentsMap)
+      : generateConstrainedSecretSantaDraw(PARTICIPANTS);
+
+    const validation = isFree
+      ? validateDerangement(PARTICIPANTS, pairs)
+      : validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs);
+
+    if (!validation.valid) {
+      throw new Error(`Draw validation failed: ${validation.reason}`);
+    }
+
+    // 3. Encrypt with new masterSalt
     const newMasterSalt = crypto.randomBytes(16).toString("hex");
+    const newVersion = (state.version ?? 0) + 1;
 
     const newParticipantsState = PARTICIPANTS.map((p) => {
       const pair = pairs.find((a) => a.giverId === p.id)!;
@@ -2774,43 +2751,177 @@ export async function setDrawMode(
         pinHash: null,
         pinSalt: null,
         encryptedWithPin: false,
+        passkeyCredentialId: null,
+        passkeyPublicKey: null,
+        passkeyCounter: 0,
+        passkeyRegisteredAt: null,
       };
     });
 
     state.version = newVersion;
-    state.deviceResetVersion = newDeviceResetVersion;
-    state.drawMode = "free";
+    state.status = "active";
+    state.drawMode = targetMode;
     state.generatedAt = new Date().toISOString();
     state.masterSalt = newMasterSalt;
     state.participants = newParticipantsState;
-  } else {
-    // targetMode === "constrained"
-    state.drawMode = "constrained";
-    state.version = newVersion;
-    state.deviceResetVersion = newDeviceResetVersion;
-    state.generatedAt = new Date().toISOString();
+    state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
-    if (
-      state.savedOfficialParticipants &&
-      state.savedOfficialParticipants.length === PARTICIPANTS.length &&
-      state.savedOfficialMasterSalt
-    ) {
-      // Restore official saved participants with reset PINs and reveal status
-      state.masterSalt = state.savedOfficialMasterSalt;
-      state.participants = state.savedOfficialParticipants.map((p) => ({
-        ...p,
-        isRevealed: false,
-        revealedAt: null,
-        pinHash: null,
-        pinSalt: null,
-        encryptedWithPin: false,
-      }));
-    } else {
-      // Re-generate constrained draw
-      const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+    // 4. Save state atomically BEFORE clearing runtime files/caches
+    await saveEventState(state);
+
+    // 5. Clear caches and rate limits
+    inMemoryStateCache = null;
+    runtimeParticipantCache.clear();
+    revealedParticipantIds.clear();
+    registeredParticipantIds.clear();
+    passkeyParticipantIds.clear();
+    deviceBindingCache.clear();
+    hardwareBindingCache.clear();
+    allRegisteredCredentialIdsSet.clear();
+    lastMarkersSyncTimestamp = 0;
+    clearAllRateLimits();
+
+    // 6. Clear local device & marker directories
+    try {
+      const localDir = path.dirname(getStorageFilePath());
+      for (const sub of [
+        "v7_revealed",
+        "v7_registered",
+        "v7_passkeys",
+        "v7_all_passkey_credentials",
+        "v7_participants",
+        "v7_devices",
+        "v7_hardware_devices",
+        "v5_participants",
+        "v5_registered",
+        "v5_revealed",
+      ]) {
+        const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
+        if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
+          fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
+        }
+      }
+      const dir = getLocalDeviceDir();
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(dir, f));
+          }
+        }
+      }
+      const hwDir = getLocalHardwareDeviceDir();
+      if (fs.existsSync(hwDir)) {
+        const files = fs.readdirSync(hwDir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(hwDir, f));
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 7. Clean runtime blobs (devices, participant records, but preserve audit logs and admin passkeys)
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        let hasMore = true;
+        let cursor: string | undefined = undefined;
+        while (hasMore) {
+          const vList: any = await list({
+            prefix: "v7/",
+            cursor,
+            limit: 1000,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          });
+          const urlsToDelete = vList.blobs
+            .filter((b: any) => !b.pathname.includes("admin_audit_logs") && !b.pathname.includes("admin_passkeys"))
+            .map((b: any) => b.url);
+          if (urlsToDelete.length > 0) {
+            await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+          }
+          hasMore = Boolean(vList.hasMore);
+          cursor = vList.cursor;
+        }
+      } catch (err) {
+        console.warn("Notice: cleaning runtime markers in Blob:", err);
+      }
+    }
+
+    await recordAdminAuditLog({
+      action: "REGENERATE_FULL_DRAW",
+      actionLabel: "Regenerate Full Draw",
+      ip: clientIp,
+      status: "SUCCESS",
+      details: `Full draw regenerated for ${PARTICIPANTS.length} participants with complete security & device reset. Mode: ${targetMode}. Round incremented to ${newVersion}. Backup: ${backupBlobKey}`,
+    });
+
+    return {
+      success: true,
+      message: `Full draw successfully regenerated for all ${PARTICIPANTS.length} participants with complete security & device reset. New Round ${newVersion} is now active.`,
+      version: newVersion,
+      backupBlobKey,
+    };
+  } finally {
+    activeResetCount--;
+  }
+}
+
+/**
+ * Toggles between Constrained Mode (official holiday rules & subgroup) and Free Mode (unconstrained pure derangement).
+ * When switching to Free mode: stashes official constrained assignments so they are never lost.
+ * When switching back to Constrained mode: restores or regenerates with all mandatory rules intact.
+ */
+export async function setDrawMode(
+  targetMode: "constrained" | "free",
+  clientIp: string = "unknown"
+): Promise<{ success: boolean; mode: "constrained" | "free"; version: number; message: string }> {
+  if (isDrawResetInProgress()) {
+    throw new Error(RESET_IN_PROGRESS_ERROR);
+  }
+
+  activeResetCount++;
+  try {
+    const state = await getEventState(true);
+    const currentMode = state.drawMode || "constrained";
+
+    const timestamp = Date.now();
+    const backupBlobKey = `secret-santa-event.backup-pre-mode-${targetMode}-${timestamp}.json`;
+    const backupSerialized = JSON.stringify(state, null, 2);
+
+    const localBackupDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
+    const backupFilePath = path.join(localBackupDir, backupBlobKey);
+    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
+
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await put(backupBlobKey, backupSerialized, {
+          access: "private",
+          addRandomSuffix: false,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+      } catch (err) {
+        console.warn("Notice: backup in Blob:", err);
+      }
+    }
+
+    const newVersion = (state.version ?? 0) + 1;
+    const newDeviceResetVersion = (state.deviceResetVersion || 1) + 1;
+
+    if (targetMode === "free") {
+      // 1. If currently constrained, stash official participants & masterSalt safely
+      if (currentMode === "constrained" && state.participants.length === PARTICIPANTS.length) {
+        state.savedOfficialParticipants = JSON.parse(JSON.stringify(state.participants));
+        state.savedOfficialMasterSalt = state.masterSalt;
+      }
+
+      // 2. Generate a pure unconstrained random derangement across all 56 participants
+      const pairs = generateSecretSantaDerangement(PARTICIPANTS);
       const newMasterSalt = crypto.randomBytes(16).toString("hex");
-      state.masterSalt = newMasterSalt;
-      state.participants = PARTICIPANTS.map((p) => {
+
+      const newParticipantsState = PARTICIPANTS.map((p) => {
         const pair = pairs.find((a) => a.giverId === p.id)!;
         const code = generateChristmasPasscode();
         const codeHash = hashPasscode(code, newMasterSalt);
@@ -2827,89 +2938,180 @@ export async function setDrawMode(
           pinHash: null,
           pinSalt: null,
           encryptedWithPin: false,
+          passkeyCredentialId: null,
+          passkeyPublicKey: null,
+          passkeyCounter: 0,
+          passkeyRegisteredAt: null,
         };
       });
-    }
-  }
 
-  // Clear in-memory caches
-  inMemoryStateCache = null;
-  runtimeParticipantCache.clear();
-  revealedParticipantIds.clear();
-  registeredParticipantIds.clear();
-  deviceBindingCache.clear();
-  lastMarkersSyncTimestamp = 0;
+      state.version = newVersion;
+      state.deviceResetVersion = newDeviceResetVersion;
+      state.drawMode = "free";
+      state.generatedAt = new Date().toISOString();
+      state.masterSalt = newMasterSalt;
+      state.participants = newParticipantsState;
+    } else {
+      // targetMode === "constrained"
+      state.drawMode = "constrained";
+      state.version = newVersion;
+      state.deviceResetVersion = newDeviceResetVersion;
+      state.generatedAt = new Date().toISOString();
 
-  // Clear Blob markers and device locks
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
-    try {
-      for (const prefix of [
-        "v7/devices/",
-        "v7/participant_devices/",
-        "v7/revealed/",
-        "v7/registered/",
-      ]) {
-        const listRes = await list({
-          prefix,
-          token: process.env.BLOB_READ_WRITE_TOKEN,
+      if (
+        state.savedOfficialParticipants &&
+        state.savedOfficialParticipants.length === PARTICIPANTS.length &&
+        state.savedOfficialMasterSalt
+      ) {
+        // Restore official saved participants with reset PINs and reveal status
+        state.masterSalt = state.savedOfficialMasterSalt;
+        state.participants = state.savedOfficialParticipants.map((p) => ({
+          ...p,
+          isRevealed: false,
+          revealedAt: null,
+          pinHash: null,
+          pinSalt: null,
+          encryptedWithPin: false,
+          passkeyCredentialId: null,
+          passkeyPublicKey: null,
+          passkeyCounter: 0,
+          passkeyRegisteredAt: null,
+        }));
+      } else {
+        // Re-generate constrained draw
+        const pairs = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+        const newMasterSalt = crypto.randomBytes(16).toString("hex");
+        state.masterSalt = newMasterSalt;
+        state.participants = PARTICIPANTS.map((p) => {
+          const pair = pairs.find((a) => a.giverId === p.id)!;
+          const code = generateChristmasPasscode();
+          const codeHash = hashPasscode(code, newMasterSalt);
+          const encryptedRecipient = encryptRecipient(pair.recipientName, code, newMasterSalt);
+
+          return {
+            id: p.id,
+            name: p.name,
+            code,
+            codeHash,
+            encryptedRecipient,
+            isRevealed: false,
+            revealedAt: null,
+            pinHash: null,
+            pinSalt: null,
+            encryptedWithPin: false,
+            passkeyCredentialId: null,
+            passkeyPublicKey: null,
+            passkeyCounter: 0,
+            passkeyRegisteredAt: null,
+          };
         });
-        if (listRes.blobs.length > 0) {
-          await del(
-            listRes.blobs.map((b) => b.url),
-            { token: process.env.BLOB_READ_WRITE_TOKEN }
-          );
-        }
-      }
-    } catch (err) {
-      console.warn("Notice: reset in Blob:", err);
-    }
-  }
-
-  try {
-    const dir = getLocalDeviceDir();
-    if (fs.existsSync(dir)) {
-      const files = fs.readdirSync(dir);
-      for (const f of files) {
-        if (f.endsWith(".json")) {
-          fs.unlinkSync(path.join(dir, f));
-        }
       }
     }
-    const localDir = path.dirname(getStorageFilePath());
-    const revealedDir = path.join(localDir, "v7_revealed");
-    const registeredDir = path.join(localDir, "v7_registered");
-    if (fs.existsSync(revealedDir)) {
-      fs.rmSync(revealedDir, { recursive: true, force: true });
+
+    // Clear in-memory caches and rate limits
+    inMemoryStateCache = null;
+    runtimeParticipantCache.clear();
+    revealedParticipantIds.clear();
+    registeredParticipantIds.clear();
+    passkeyParticipantIds.clear();
+    deviceBindingCache.clear();
+    hardwareBindingCache.clear();
+    allRegisteredCredentialIdsSet.clear();
+    lastMarkersSyncTimestamp = 0;
+    clearAllRateLimits();
+
+    // Clear Blob markers and device locks
+    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+      try {
+        for (const prefix of [
+          "v7/devices/",
+          "v7/hardware_devices/",
+          "v7/participant_devices/",
+          "v7/revealed/",
+          "v7/registered/",
+          "v7/passkeys/",
+          "v7/all_passkey_credentials/",
+          "v7/participants/",
+        ]) {
+          const listRes = await list({
+            prefix,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          });
+          if (listRes.blobs.length > 0) {
+            await del(
+              listRes.blobs.map((b) => b.url),
+              { token: process.env.BLOB_READ_WRITE_TOKEN }
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Notice: reset in Blob:", err);
+      }
     }
-    if (fs.existsSync(registeredDir)) {
-      fs.rmSync(registeredDir, { recursive: true, force: true });
+
+    try {
+      const localDir = path.dirname(getStorageFilePath());
+      for (const sub of [
+        "v7_revealed",
+        "v7_registered",
+        "v7_passkeys",
+        "v7_all_passkey_credentials",
+        "v7_participants",
+        "v7_devices",
+        "v7_hardware_devices",
+      ]) {
+        const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
+        if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
+          fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
+        }
+      }
+      const dir = getLocalDeviceDir();
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(dir, f));
+          }
+        }
+      }
+      const hwDir = getLocalHardwareDeviceDir();
+      if (fs.existsSync(hwDir)) {
+        const files = fs.readdirSync(hwDir);
+        for (const f of files) {
+          if (f.endsWith(".json")) {
+            fs.unlinkSync(path.join(hwDir, f));
+          }
+        }
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
-  }
 
-  await saveEventState(state);
+    await saveEventState(state);
 
-  const actionDetails =
-    targetMode === "free"
-      ? "Switched to Free Draw Mode (Test Mode). All special rules disabled for demo."
-      : "Restored Constrained Draw Mode. All special rules (Subgroup 24, directed pairs) active.";
-
-  await recordAdminAuditLog({
-    action: "SET_DRAW_MODE",
-    actionLabel: targetMode === "free" ? "Enable Free Mode (Test)" : "Restore Constrained Rules",
-    ip: clientIp,
-    status: "SUCCESS",
-    details: `${actionDetails} Advanced to Round ${newVersion}. Backup: ${backupBlobKey}`,
-  });
-
-  return {
-    success: true,
-    mode: targetMode,
-    version: newVersion,
-    message:
+    const actionDetails =
       targetMode === "free"
-        ? "Normal draw mode (unconstrained) activated successfully. Participants can now test the portal with fully randomized pairings."
-        : "Constrained draw mode restored successfully. All rules and special assignments are active.",
-  };
+        ? "Switched to Free Draw Mode (Test Mode). All special rules disabled for demo."
+        : "Restored Constrained Draw Mode. All special rules (Subgroup 24, directed pairs) active.";
+
+    await recordAdminAuditLog({
+      action: "SET_DRAW_MODE",
+      actionLabel: targetMode === "free" ? "Enable Free Mode (Test)" : "Restore Constrained Rules",
+      ip: clientIp,
+      status: "SUCCESS",
+      details: `${actionDetails} Advanced to Round ${newVersion}. Backup: ${backupBlobKey}`,
+    });
+
+    return {
+      success: true,
+      mode: targetMode,
+      version: newVersion,
+      message:
+        targetMode === "free"
+          ? "Normal draw mode (unconstrained) activated successfully. Participants can now test the portal with fully randomized pairings."
+          : "Constrained draw mode restored successfully. All rules and special assignments are active.",
+    };
+  } finally {
+    activeResetCount--;
+  }
 }

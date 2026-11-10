@@ -76,3 +76,11 @@ export function checkRateLimit(identifier: string): {
 export function resetRateLimit(identifier: string): void {
   rateLimitStore.delete(identifier);
 }
+
+/**
+ * Clears all rate-limit counters and lockouts across all participants and IPs
+ * when an authorized full event reset or draw regeneration is executed.
+ */
+export function clearAllRateLimits(): void {
+  rateLimitStore.clear();
+}

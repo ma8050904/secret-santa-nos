@@ -146,7 +146,7 @@ export async function getHardwareFingerprint(): Promise<string> {
       const hashBuffer = await window.crypto.subtle.digest("SHA-256", msgUint8);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      cachedHwFingerprint = `hw_${hashHex}`;
+      cachedHwFingerprint = `hw_v2_${hashHex}`;
     } else {
       let hash = 0;
       for (let i = 0; i < rawSignature.length; i++) {
@@ -154,7 +154,7 @@ export async function getHardwareFingerprint(): Promise<string> {
         hash = (hash << 5) - hash + char;
         hash |= 0;
       }
-      cachedHwFingerprint = `hw_fallback_${Math.abs(hash).toString(16)}`;
+      cachedHwFingerprint = `hw_v2_fallback_${Math.abs(hash).toString(16)}`;
     }
 
     // Set cookie for automatic transmission on subsequent server requests

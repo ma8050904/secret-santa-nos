@@ -15,17 +15,32 @@ const ADMIN_COOKIE_NAME = "santa_admin_token";
  * Returns WebAuthn RP details (RP ID and Origin) derived dynamically from request headers.
  */
 export function getWebAuthnRpDetails(req: NextRequest): { rpID: string; origin: string } {
-  const host =
+  const hostHeader =
     req.headers.get("x-forwarded-host") ||
     req.headers.get("host") ||
     "secret-santa-holiday.vercel.app";
 
-  const hostname = host.split(":")[0];
+  const rawHostname = hostHeader.split(":")[0].toLowerCase();
+
+  // Whitelist check to prevent Host header injection attacks on WebAuthn RP ID and Origin
+  const isAllowedHost =
+    rawHostname === "secret-santa-holiday.vercel.app" ||
+    rawHostname.endsWith(".vercel.app") ||
+    rawHostname === "localhost" ||
+    rawHostname === "127.0.0.1" ||
+    Boolean(process.env.APP_DOMAIN && rawHostname === process.env.APP_DOMAIN.toLowerCase());
+
+  const hostname = isAllowedHost ? rawHostname : "secret-santa-holiday.vercel.app";
   const proto =
     req.headers.get("x-forwarded-proto") ||
     (hostname === "localhost" || hostname === "127.0.0.1" ? "http" : "https");
 
-  const origin = `${proto}://${host}`;
+  const port =
+    (hostname === "localhost" || hostname === "127.0.0.1") && hostHeader.includes(":")
+      ? `:${hostHeader.split(":")[1]}`
+      : "";
+
+  const origin = `${proto}://${hostname}${port}`;
   return { rpID: hostname, origin };
 }
 

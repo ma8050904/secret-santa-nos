@@ -7,6 +7,7 @@ import {
   getParticipantBiometricStatus,
   getDeviceOrHardwareBinding,
   getAllRegisteredPasskeyCredentials,
+  isValidPasskeyCredentialId,
 } from "@/lib/storage";
 import { getWebAuthnRpDetails } from "@/lib/admin-auth";
 import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
@@ -52,40 +53,56 @@ export async function POST(req: NextRequest) {
     }
 
     const { rpID } = getWebAuthnRpDetails(req);
+    const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
 
-    // 3. Mode Selection: Authenticate (if passkey exists) or Register (first time)
-    if (status.hasPasskey && status.passkeyCredentialId) {
-      const options = await generateAuthenticationOptions({
-        rpID,
-        allowCredentials: [
+    // 3. Mode Selection: Authenticate (if valid passkey exists) or Register (first time only)
+    if (status.hasPasskey) {
+      if (isValidPasskeyCredentialId(status.passkeyCredentialId)) {
+        const options = await generateAuthenticationOptions({
+          rpID,
+          allowCredentials: [
+            {
+              id: status.passkeyCredentialId,
+            },
+          ],
+          userVerification: "required",
+          timeout: 30000,
+        });
+
+        const response = NextResponse.json({
+          success: true,
+          mode: "authenticate" as const,
+          options,
+        });
+
+        // Save challenge in secure HTTP-only cookie
+        response.cookies.set("santa_biometric_challenge", `auth:${options.challenge}`, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          path: "/",
+          maxAge: 300,
+        });
+
+        return response;
+      } else {
+        // Participant has a passkey record/marker, but credential ID is corrupted or unreadable.
+        // DO NOT silently open registration — that would allow unauthorized account takeover.
+        // Require trusted PIN authentication or admin recovery.
+        return NextResponse.json(
           {
-            id: status.passkeyCredentialId,
+            success: false,
+            error: "Biometric credential requires PIN recovery. Please enter your 4-digit PIN.",
+            requiresPinRecovery: true,
           },
-        ],
-        userVerification: "required",
-        timeout: 30000,
-      });
-
-      const response = NextResponse.json({
-        success: true,
-        mode: "authenticate" as const,
-        options,
-      });
-
-      // Save challenge in secure HTTP-only cookie
-      response.cookies.set("santa_biometric_challenge", `auth:${options.challenge}`, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: 300,
-      });
-
-      return response;
+          { status: 403 }
+        );
+      }
     } else {
       // First-time registration with Silicon-level Hardware Exclusion
       // Excludes all known credentials so Apple Secure Enclave / TPM refuses duplicate registration on same device
       const allCredentials = await getAllRegisteredPasskeyCredentials();
+      const validCredentials = allCredentials.filter((id) => isValidPasskeyCredentialId(id));
       const safeUserName = `${status.name.replace(/[^\w]/g, "").toLowerCase() || "student"}_${participantId.slice(0, 8)}@secretsanta.holiday`;
 
       const options = await generateRegistrationOptions({
@@ -95,7 +112,7 @@ export async function POST(req: NextRequest) {
         userName: safeUserName,
         userDisplayName: status.name,
         attestationType: "none",
-        excludeCredentials: allCredentials.map((id) => ({
+        excludeCredentials: validCredentials.map((id) => ({
           id,
           type: "public-key",
         })),
