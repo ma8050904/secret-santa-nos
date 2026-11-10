@@ -2381,6 +2381,16 @@ export async function resetAllDeviceBindings(
     // ignore
   }
 
+  // Clear PostgreSQL device and hardware bindings
+  const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await clearPostgresDeviceBindings();
+    } catch (pgErr) {
+      console.warn("Notice: clearing Postgres device bindings:", pgErr);
+    }
+  }
+
   await recordAdminAuditLog({
     action: "RESET_ALL_DEVICES",
     actionLabel: "Reset All Device Bindings",
@@ -2462,6 +2472,16 @@ export async function fullEventReset(
     allRegisteredCredentialIdsSet.clear();
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
+
+    // Clear PostgreSQL device bindings
+    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await clearPostgresDeviceBindings();
+      } catch (pgErr) {
+        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+      }
+    }
 
     // 6. Clear all device bindings and markers from Blob
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
@@ -2994,6 +3014,16 @@ export async function regenerateFullDraw(
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
 
+    // Clear PostgreSQL device bindings
+    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await clearPostgresDeviceBindings();
+      } catch (pgErr) {
+        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+      }
+    }
+
     // 6. Clear local device & marker directories
     try {
       const localDir = path.dirname(getStorageFilePath());
@@ -3229,6 +3259,16 @@ export async function setDrawMode(
     allRegisteredCredentialIdsSet.clear();
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
+
+    // Clear PostgreSQL device bindings
+    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await clearPostgresDeviceBindings();
+      } catch (pgErr) {
+        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+      }
+    }
 
     // Clear Blob markers and device locks
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
