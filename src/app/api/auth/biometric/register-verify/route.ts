@@ -56,8 +56,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: result.error || "Failed to register credential." }, { status: 400 });
     }
 
-    // Authoritatively bind this hardware device to the participant
-    await bindDeviceToParticipant(deviceId, participantId, result.participant.name, { ip, userAgent });
+    // Authoritatively bind this hardware device in background
+    bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
+      ip,
+      userAgent,
+    }).catch((err) => console.warn("Background device binding notice:", err));
 
     const response = NextResponse.json({
       success: true,

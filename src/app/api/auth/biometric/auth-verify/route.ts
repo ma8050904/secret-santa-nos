@@ -65,8 +65,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Refresh device binding
-    await bindDeviceToParticipant(deviceId, participantId, result.participant.name, { ip, userAgent });
+    // Refresh device binding in background
+    bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
+      ip,
+      userAgent,
+    }).catch((err) => console.warn("Background device binding notice:", err));
 
     const response = NextResponse.json({
       success: true,

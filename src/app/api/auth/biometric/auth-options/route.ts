@@ -48,7 +48,6 @@ export async function POST(req: NextRequest) {
       allowCredentials: [
         {
           id: status.passkeyCredentialId,
-          transports: ["internal"] as any, // Strictly internal platform authenticator (Face ID / Touch ID)
         },
       ],
       userVerification: "required",

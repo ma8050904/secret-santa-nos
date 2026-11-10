@@ -169,6 +169,7 @@ const runtimeParticipantCache = new Map<string, ParticipantRuntimeState>();
 const deviceBindingCache = new Map<string, DeviceBindingRecord>();
 const revealedParticipantIds = new Set<string>();
 const registeredParticipantIds = new Set<string>();
+const passkeyParticipantIds = new Set<string>();
 let lastMarkersSyncTimestamp = 0;
 const MARKERS_TTL_MS = 3000;
 
@@ -220,9 +221,10 @@ async function syncMarkers(force = false): Promise<void> {
   // 1. Cloud Blob sync (only when not running in isolated local test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      const [revealedList, registeredList] = await Promise.all([
+      const [revealedList, registeredList, passkeyList] = await Promise.all([
         list({ prefix: "v7/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
         list({ prefix: "v7/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v7/passkeys/", token: process.env.BLOB_READ_WRITE_TOKEN }),
       ]);
 
       const freshRevealed = new Set<string>();
@@ -237,11 +239,20 @@ async function syncMarkers(force = false): Promise<void> {
         if (id) freshRegistered.add(id);
       }
 
+      const freshPasskeys = new Set<string>();
+      for (const b of passkeyList.blobs) {
+        const id = b.pathname.replace("v7/passkeys/", "");
+        if (id) freshPasskeys.add(id);
+      }
+
       revealedParticipantIds.clear();
       for (const id of freshRevealed) revealedParticipantIds.add(id);
 
       registeredParticipantIds.clear();
       for (const id of freshRegistered) registeredParticipantIds.add(id);
+
+      passkeyParticipantIds.clear();
+      for (const id of freshPasskeys) passkeyParticipantIds.add(id);
 
       lastMarkersSyncTimestamp = now;
       return;
@@ -255,6 +266,7 @@ async function syncMarkers(force = false): Promise<void> {
     const localDir = path.dirname(getStorageFilePath());
     const revealedDir = path.join(localDir, "v7_revealed");
     const registeredDir = path.join(localDir, "v7_registered");
+    const passkeysDir = path.join(localDir, "v7_passkeys");
 
     const freshRevealed = new Set<string>();
     if (fs.existsSync(revealedDir)) {
@@ -268,11 +280,20 @@ async function syncMarkers(force = false): Promise<void> {
       for (const f of files) freshRegistered.add(f);
     }
 
+    const freshPasskeys = new Set<string>();
+    if (fs.existsSync(passkeysDir)) {
+      const files = fs.readdirSync(passkeysDir);
+      for (const f of files) freshPasskeys.add(f);
+    }
+
     revealedParticipantIds.clear();
     for (const id of freshRevealed) revealedParticipantIds.add(id);
 
     registeredParticipantIds.clear();
     for (const id of freshRegistered) registeredParticipantIds.add(id);
+
+    passkeyParticipantIds.clear();
+    for (const id of freshPasskeys) passkeyParticipantIds.add(id);
 
     lastMarkersSyncTimestamp = now;
   } catch {
@@ -325,6 +346,9 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
           if (registeredParticipantIds.has(p.id)) {
             p.pinHash = p.pinHash || "registered_marker_present";
           }
+          if (passkeyParticipantIds.has(p.id)) {
+            p.passkeyCredentialId = p.passkeyCredentialId || "passkey_marker_present";
+          }
         }
 
         inMemoryStateCache = parsed;
@@ -353,6 +377,9 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
         }
         if (registeredParticipantIds.has(p.id)) {
           p.pinHash = p.pinHash || "registered_marker_present";
+        }
+        if (passkeyParticipantIds.has(p.id)) {
+          p.passkeyCredentialId = p.passkeyCredentialId || "passkey_marker_present";
         }
       }
 
@@ -456,6 +483,7 @@ export async function getParticipantRuntimeState(
         runtimeParticipantCache.set(participantId, parsed);
         if (parsed.isRevealed) revealedParticipantIds.add(participantId);
         if (parsed.pinHash || parsed.passkeyCredentialId) registeredParticipantIds.add(participantId);
+        if (parsed.passkeyCredentialId) passkeyParticipantIds.add(participantId);
         return parsed;
       }
     } catch {
@@ -472,6 +500,7 @@ export async function getParticipantRuntimeState(
       runtimeParticipantCache.set(participantId, parsed);
       if (parsed.isRevealed) revealedParticipantIds.add(participantId);
       if (parsed.pinHash || parsed.passkeyCredentialId) registeredParticipantIds.add(participantId);
+      if (parsed.passkeyCredentialId) passkeyParticipantIds.add(participantId);
       return parsed;
     }
   } catch {
@@ -500,6 +529,7 @@ export async function getParticipantRuntimeState(
     runtimeParticipantCache.set(participantId, fromMaster);
     if (fromMaster.isRevealed) revealedParticipantIds.add(participantId);
     if (fromMaster.pinHash || fromMaster.passkeyCredentialId) registeredParticipantIds.add(participantId);
+    if (fromMaster.passkeyCredentialId) passkeyParticipantIds.add(participantId);
     return fromMaster;
   }
 
@@ -516,6 +546,7 @@ export async function saveParticipantRuntimeState(
   runtimeParticipantCache.set(state.participantId, state);
   if (state.isRevealed) revealedParticipantIds.add(state.participantId);
   if (state.pinHash || state.passkeyCredentialId) registeredParticipantIds.add(state.participantId);
+  if (state.passkeyCredentialId) passkeyParticipantIds.add(state.participantId);
 
   // Sync to inMemoryStateCache if present
   if (inMemoryStateCache) {
@@ -559,6 +590,16 @@ export async function saveParticipantRuntimeState(
           })
         );
       }
+      if (state.passkeyCredentialId) {
+        promises.push(
+          put(`v7/passkeys/${state.participantId}`, "1", {
+            access: "private",
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          })
+        );
+      }
       if (state.isRevealed) {
         promises.push(
           put(`v7/revealed/${state.participantId}`, "1", {
@@ -585,10 +626,15 @@ export async function saveParticipantRuntimeState(
     fs.renameSync(tempPath, filePath);
 
     const localBaseDir = path.dirname(getStorageFilePath());
-    if (state.pinHash) {
+    if (state.pinHash || state.passkeyCredentialId) {
       const regDir = path.join(localBaseDir, "v7_registered");
       if (!fs.existsSync(regDir)) fs.mkdirSync(regDir, { recursive: true });
       fs.writeFileSync(path.join(regDir, state.participantId), "");
+    }
+    if (state.passkeyCredentialId) {
+      const passDir = path.join(localBaseDir, "v7_passkeys");
+      if (!fs.existsSync(passDir)) fs.mkdirSync(passDir, { recursive: true });
+      fs.writeFileSync(path.join(passDir, state.participantId), "");
     }
     if (state.isRevealed) {
       const revDir = path.join(localBaseDir, "v7_revealed");
@@ -884,8 +930,13 @@ export async function getParticipantBiometricStatus(participantId: string): Prom
   const runtime = await getParticipantRuntimeState(participantId);
   const masterState = await getEventState();
   const p = masterState.participants.find((item) => item.id === participantId);
+  const hasPasskey = Boolean(
+    runtime?.passkeyCredentialId ||
+    p?.passkeyCredentialId ||
+    passkeyParticipantIds.has(participantId)
+  );
   return {
-    hasPasskey: Boolean(runtime?.passkeyCredentialId || p?.passkeyCredentialId),
+    hasPasskey,
     hasPin: Boolean(runtime?.pinHash || p?.pinHash),
     isRevealed: Boolean(runtime?.isRevealed || p?.isRevealed),
     passkeyCredentialId: runtime?.passkeyCredentialId || p?.passkeyCredentialId || null,
@@ -1857,6 +1908,7 @@ export async function fullEventReset(
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
+  passkeyParticipantIds.clear();
   deviceBindingCache.clear();
   lastMarkersSyncTimestamp = 0;
 
@@ -1868,6 +1920,7 @@ export async function fullEventReset(
         "v7/participant_devices/",
         "v7/revealed/",
         "v7/registered/",
+        "v7/passkeys/",
       ]) {
         const listRes = await list({
           prefix,
@@ -2020,10 +2073,15 @@ export async function resetSingleParticipant(
   participant.encryptedWithPin = false;
   participant.isRevealed = false;
   participant.revealedAt = null;
+  participant.passkeyCredentialId = null;
+  participant.passkeyPublicKey = null;
+  participant.passkeyCounter = 0;
+  participant.passkeyRegisteredAt = null;
 
   runtimeParticipantCache.delete(participantId);
   revealedParticipantIds.delete(participantId);
   registeredParticipantIds.delete(participantId);
+  passkeyParticipantIds.delete(participantId);
   lastMarkersSyncTimestamp = 0;
 
   // Clear Blob markers
@@ -2032,6 +2090,8 @@ export async function resetSingleParticipant(
       const markers = [
         `v7/revealed/${participantId}`,
         `v7/registered/${participantId}`,
+        `v7/passkeys/${participantId}`,
+        `v7/participants/${participantId}.json`,
       ];
       for (const m of markers) {
         try {
@@ -2335,13 +2395,14 @@ export async function regenerateFullDraw(
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
+  passkeyParticipantIds.clear();
   deviceBindingCache.clear();
   lastMarkersSyncTimestamp = 0;
 
   // Clear local device & marker directories
   try {
     const localDir = path.dirname(getStorageFilePath());
-    for (const sub of ["v7_revealed", "v7_registered", "v7_participants", "v7_devices"]) {
+    for (const sub of ["v7_revealed", "v7_registered", "v7_passkeys", "v7_participants", "v7_devices"]) {
       const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
       if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
         fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
