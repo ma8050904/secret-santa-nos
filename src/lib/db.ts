@@ -319,3 +319,114 @@ export async function atomicBindDeviceToParticipant(
     return { success: false, error: "Database error binding device." };
   }
 }
+
+/**
+ * Checks whether a device or physical hardware fingerprint is already bound to any participant.
+ * Operates across all Vercel Serverless microVM instances, cold starts, and Incognito browsing tabs.
+ */
+export async function getPostgresDeviceOrHardwareBinding(
+  deviceId: string,
+  hwFp?: string | null,
+  resetVersion: number = 1
+): Promise<{ participantId: string; participantName: string; deviceId: string; hardwareFingerprint?: string } | null> {
+  const sql = getDbClient();
+  if (!sql) return null;
+
+  const cleanDeviceId = deviceId?.trim().toLowerCase();
+  const cleanHwFp = hwFp?.trim().toLowerCase();
+
+  try {
+    // 1. Check by Device ID
+    if (cleanDeviceId) {
+      const devRows = await sql`
+        SELECT participant_id, participant_name, device_id, hardware_fingerprint
+        FROM device_bindings
+        WHERE device_id = ${cleanDeviceId} AND reset_version >= ${resetVersion}
+        LIMIT 1;
+      `;
+      if (devRows && devRows.length > 0) {
+        return {
+          participantId: String(devRows[0].participant_id),
+          participantName: String(devRows[0].participant_name),
+          deviceId: String(devRows[0].device_id),
+          hardwareFingerprint: devRows[0].hardware_fingerprint ? String(devRows[0].hardware_fingerprint) : undefined,
+        };
+      }
+    }
+
+    // 2. Check by Physical Hardware Fingerprint (crucial for Incognito / private mode / cookie wipe!)
+    if (cleanHwFp && cleanHwFp.length > 5) {
+      const hwRows = await sql`
+        SELECT participant_id, participant_name, device_id, hardware_fingerprint
+        FROM hardware_bindings
+        WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
+        LIMIT 1;
+      `;
+      if (hwRows && hwRows.length > 0) {
+        return {
+          participantId: String(hwRows[0].participant_id),
+          participantName: String(hwRows[0].participant_name),
+          deviceId: String(hwRows[0].device_id),
+          hardwareFingerprint: String(hwRows[0].hardware_fingerprint),
+        };
+      }
+    }
+  } catch (err) {
+    console.error("Database error in getPostgresDeviceOrHardwareBinding:", err);
+  }
+
+  return null;
+}
+
+/**
+ * Clears all device bindings and hardware fingerprint locks in PostgreSQL
+ * during an authorized draw regeneration or administrative reset.
+ */
+export async function clearPostgresDeviceBindings(): Promise<void> {
+  const sql = getDbClient();
+  if (!sql) return;
+  try {
+    await sql`TRUNCATE TABLE device_bindings;`;
+    await sql`TRUNCATE TABLE hardware_bindings;`;
+  } catch (err) {
+    console.error("Database error clearing device bindings:", err);
+  }
+}
+
+/**
+ * Retrieves the authoritative master event state from PostgreSQL.
+ */
+export async function getPostgresEventState(): Promise<EventState | null> {
+  const sql = getDbClient();
+  if (!sql) return null;
+  try {
+    const rows = await sql`SELECT value FROM event_meta WHERE key = 'master_event_state' LIMIT 1;`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return (typeof rows[0].value === "string" ? JSON.parse(rows[0].value) : rows[0].value) as EventState;
+    }
+  } catch (err) {
+    console.error("Database error reading event state from PostgreSQL:", err);
+  }
+  return null;
+}
+
+/**
+ * Persists the authoritative master event state atomically into PostgreSQL.
+ */
+export async function savePostgresEventState(state: EventState): Promise<boolean> {
+  const sql = getDbClient();
+  if (!sql) return false;
+  try {
+    const jsonStr = JSON.stringify(state);
+    await sql`
+      INSERT INTO event_meta (key, value, updated_at)
+      VALUES ('master_event_state', ${jsonStr}::jsonb, NOW())
+      ON CONFLICT (key) DO UPDATE
+      SET value = ${jsonStr}::jsonb, updated_at = NOW();
+    `;
+    return true;
+  } catch (err) {
+    console.error("Database error saving event state to PostgreSQL:", err);
+    return false;
+  }
+}

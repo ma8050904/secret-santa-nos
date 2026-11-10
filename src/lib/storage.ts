@@ -373,6 +373,21 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
     return inMemoryStateCache;
   }
 
+  // 0. Primary: Transactional PostgreSQL Store if configured
+  const { isPostgresConfigured, getPostgresEventState } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pgState = await getPostgresEventState();
+      if (pgState && pgState.participants && pgState.participants.length === 56) {
+        inMemoryStateCache = pgState;
+        inMemoryCacheTimestamp = Date.now();
+        return pgState;
+      }
+    } catch (pgErr) {
+      console.warn("Notice: PostgreSQL fetch attempt:", pgErr);
+    }
+  }
+
   // 1. Try reading from Vercel Private Blob store if configured (and not running in isolated local test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
@@ -480,6 +495,16 @@ export async function saveEventState(state: EventState): Promise<void> {
 
   writeLock = writeLock.catch(() => {}).then(async () => {
     const serialized = JSON.stringify(state, null, 2);
+
+    // 0. Primary: Persist to PostgreSQL if configured (and not in isolated test mode)
+    const { isPostgresConfigured, savePostgresEventState } = await import("./db");
+    if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+      try {
+        await savePostgresEventState(state);
+      } catch (pgErr) {
+        console.error("Critical: Failed to save state to PostgreSQL:", pgErr);
+      }
+    }
 
     // 1. Persist to Vercel Private Blob if configured (and not in isolated test mode)
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
@@ -1522,6 +1547,37 @@ export async function getDeviceOrHardwareBinding(
   deviceId: string,
   hwFp?: string | null
 ): Promise<DeviceBindingRecord | null> {
+  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
+  if (isPostgresConfigured()) {
+    let resetVersion = 1;
+    try {
+      const state = await getEventState();
+      resetVersion = state.deviceResetVersion || 1;
+    } catch {
+      // fallback
+    }
+    const pgBinding = await getPostgresDeviceOrHardwareBinding(deviceId, hwFp, resetVersion);
+    if (pgBinding) {
+      return {
+        deviceId: pgBinding.deviceId,
+        hardwareFingerprint: pgBinding.hardwareFingerprint,
+        participantId: pgBinding.participantId,
+        participantName: pgBinding.participantName,
+        boundAt: new Date().toISOString(),
+        lastUsedAt: new Date().toISOString(),
+        ip: "postgres",
+        userAgent: "",
+        deviceModel: "Personal Device",
+        os: "Operating System",
+        browser: "Web Browser",
+        summary: "Bound Physical Device",
+        hasRevealed: false,
+        revealedAt: null,
+        resetVersion,
+      };
+    }
+  }
+
   const byDevice = await getDeviceBinding(deviceId);
   if (byDevice) {
     return byDevice;
