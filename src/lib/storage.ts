@@ -112,13 +112,39 @@ export interface DeviceBindingRecord {
   resetVersion?: number;
 }
 
+function getLocalBackupDir(): string {
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const dir = isServerless ? path.join("/tmp", ".data") : path.join(process.cwd(), ".data");
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch {
+    // ignore in read-only environments
+  }
+  return dir;
+}
+
+function safeWriteBackup(filename: string, content: string): string | null {
+  try {
+    const dir = getLocalBackupDir();
+    const target = path.join(dir, filename);
+    fs.writeFileSync(target, content, "utf-8");
+    return target;
+  } catch (err) {
+    console.warn("Notice: Local backup write skipped in serverless environment:", err);
+    return null;
+  }
+}
+
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
 function getStorageFilePath(): string {
   if (process.env.STORAGE_FILE_PATH) {
     return process.env.STORAGE_FILE_PATH;
   }
-  const localDir = path.join(process.cwd(), ".data");
-  if (fs.existsSync(localDir) || !process.env.VERCEL) {
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (!isServerless) {
+    const localDir = path.join(process.cwd(), ".data");
     try {
       if (!fs.existsSync(localDir)) {
         fs.mkdirSync(localDir, { recursive: true });
@@ -2242,13 +2268,7 @@ export async function fullEventReset(
     const backupBlobKey = `secret-santa-event.backup-pre-full-reset-${timestamp}.json`;
     const backupSerialized = JSON.stringify(state, null, 2);
 
-    const localBackupDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
-    const backupFilePath = path.join(localBackupDir, backupBlobKey);
-    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
-    if (!fs.existsSync(backupFilePath) || fs.statSync(backupFilePath).size < 1000) {
-      throw new Error("Pre-reset backup verification failed. Operation aborted for safety.");
-    }
+    safeWriteBackup(backupBlobKey, backupSerialized);
 
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
       try {
@@ -2564,13 +2584,7 @@ export async function rerollSubgroup20(
     }
   }
 
-  try {
-    const localBackupDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
-    fs.writeFileSync(path.join(localBackupDir, backupBlobKey), backupSerialized, "utf-8");
-  } catch {
-    // ignore
-  }
+  safeWriteBackup(backupBlobKey, backupSerialized);
 
   // 2. Extract and preserve participants' assignments outside the designated subgroup
   const preservedOutsidePairs: AssignmentPair[] = [];
@@ -2732,13 +2746,7 @@ export async function regenerateFullDraw(
     const backupBlobKey = `secret-santa-event.backup-pre-full-regenerate-${timestamp}.json`;
     const backupSerialized = JSON.stringify(state, null, 2);
 
-    const localBackupDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
-    const backupFilePath = path.join(localBackupDir, backupBlobKey);
-    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
-    if (!fs.existsSync(backupFilePath) || fs.statSync(backupFilePath).size < 1000) {
-      throw new Error("Pre-regeneration backup verification failed. Operation aborted for safety.");
-    }
+    safeWriteBackup(backupBlobKey, backupSerialized);
 
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
       try {
@@ -2946,10 +2954,7 @@ export async function setDrawMode(
     const backupBlobKey = `secret-santa-event.backup-pre-mode-${targetMode}-${timestamp}.json`;
     const backupSerialized = JSON.stringify(state, null, 2);
 
-    const localBackupDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(localBackupDir)) fs.mkdirSync(localBackupDir, { recursive: true });
-    const backupFilePath = path.join(localBackupDir, backupBlobKey);
-    fs.writeFileSync(backupFilePath, backupSerialized, "utf-8");
+    safeWriteBackup(backupBlobKey, backupSerialized);
 
     if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
       try {

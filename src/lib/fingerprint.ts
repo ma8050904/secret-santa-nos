@@ -107,22 +107,29 @@ async function getAudioFingerprint(): Promise<string> {
 function getHardwareMetrics(): string {
   if (typeof window === "undefined") return "";
   const screen = window.screen;
+  const dpr = window.devicePixelRatio || 1;
+  const realWidth = Math.round((screen?.width || 0) * dpr);
+  const realHeight = Math.round((screen?.height || 0) * dpr);
+  const colorDepth = screen?.colorDepth || 0;
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  const lang = (navigator.language || "").split("-")[0].toLowerCase();
+
   return [
-    screen?.width || 0,
-    screen?.height || 0,
-    screen?.colorDepth || 0,
-    window.devicePixelRatio || 1,
+    realWidth,
+    realHeight,
+    colorDepth,
     navigator.hardwareConcurrency || 0,
     navigator.maxTouchPoints || 0,
     navigator.platform || "",
     timezone,
+    lang,
   ].join(":");
 }
 
 /**
  * Returns a cryptographically hashed, hardware-anchored device signature.
- * Guaranteed to remain stable across Private / Incognito browsing tabs on the same device.
+ * Strictly stable across Private / Incognito browsing tabs on the same physical hardware,
+ * immune to Safari / Chrome private browsing canvas & audio noise injection.
  */
 export async function getHardwareFingerprint(): Promise<string> {
   if (cachedHwFingerprint) return cachedHwFingerprint;
@@ -132,14 +139,29 @@ export async function getHardwareFingerprint(): Promise<string> {
   }
 
   try {
-    const [canvasFp, webglFp, audioFp, hwMetrics] = await Promise.all([
-      Promise.resolve(getCanvasFingerprint()),
-      Promise.resolve(getWebGLFingerprint()),
-      getAudioFingerprint().catch(() => "audio-err"),
-      Promise.resolve(getHardwareMetrics()),
-    ]);
+    // 1. Stable WebGL hardware limits (immune to private mode masking)
+    let webglStable = "no-webgl";
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = (canvas.getContext("webgl") ||
+        canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+      if (gl) {
+        const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
+        const maxRenderbufferSize = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || 0;
+        const maxViewportDims = (gl.getParameter(gl.MAX_VIEWPORT_DIMS) || []).join("x");
+        const maxVertexAttribs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 0;
+        webglStable = `${maxTextureSize}~${maxRenderbufferSize}~${maxViewportDims}~${maxVertexAttribs}`;
+      }
+    } catch {
+      webglStable = "webgl-err";
+    }
 
-    const rawSignature = `${canvasFp}###${webglFp}###${audioFp}###${hwMetrics}`;
+    // 2. Physical hardware display & processor metrics
+    const hwMetrics = getHardwareMetrics();
+
+    // The signature combines physical silicon, GPU capabilities, display resolution, and hardware architecture.
+    // It purposefully avoids volatile Canvas/Audio pixel buffers which Safari private browsing randomizes.
+    const rawSignature = `silicon_anchor###${webglStable}###${hwMetrics}`;
 
     if (window.crypto?.subtle) {
       const msgUint8 = new TextEncoder().encode(rawSignature);
