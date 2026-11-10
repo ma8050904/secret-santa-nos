@@ -27,7 +27,13 @@ import {
   Fingerprint,
   KeyRound,
   Trash2,
+  QrCode,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { startAuthentication, startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { Snowfall } from "@/components/Snowfall";
 
@@ -68,7 +74,12 @@ interface AdminAuditLogEntry {
     | "RESET_ALL_DEVICES"
     | "ADMIN_LOGIN"
     | "ADMIN_LOGIN_FAILED"
-    | "GIFT_REVEALED";
+    | "GIFT_REVEALED"
+    | "REGISTER_PASSKEY"
+    | "DELETE_PASSKEY"
+    | "AUTH_PASSKEY_LOGIN"
+    | "SET_DRAW_MODE"
+    | "RESET_AUDIT_LOGS";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -114,11 +125,35 @@ export default function AdminDashboardPage() {
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
   const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
 
-  // Active Confirmation Modal state
-  const [activeModal, setActiveModal] = useState<
-    "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES" | "FULL_RESET" | null
-  >(null);
+  // Active Confirmation Modal state (Full Event Reset and Reroll Subgroup completely removed)
+  const [activeModal, setActiveModal] = useState<"FULL_REGENERATE" | "RESET_DEVICES" | null>(null);
   const [isActionSubmitting, setIsActionSubmitting] = useState(false);
+
+  // Participant Directory Collapsible state (collapsed by default)
+  const [isParticipantDirectoryExpanded, setIsParticipantDirectoryExpanded] = useState(false);
+
+  // Participant Portal QR Code state (targets exact production URL)
+  const PRODUCTION_PORTAL_URL = "https://secret-santa-holiday.vercel.app";
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
+  const [hasCopiedPortalLink, setHasCopiedPortalLink] = useState(false);
+
+  const handleOpenQrModal = useCallback(async () => {
+    try {
+      const dataUrl = await QRCode.toDataURL(PRODUCTION_PORTAL_URL, {
+        width: 320,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#ffffff",
+        },
+      });
+      setQrCodeDataUrl(dataUrl);
+    } catch (err) {
+      console.error("Failed to generate QR code", err);
+    }
+    setShowQrModal(true);
+  }, [PRODUCTION_PORTAL_URL]);
 
   // Custom password management state (Mac Keychain & Touch ID compatible)
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -463,17 +498,15 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // Execute Sensitive Action
-  const executeAction = async (actionType: "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES" | "FULL_RESET") => {
+  // Execute Sensitive Action (Full Event Reset and Reroll Subgroup completely removed)
+  const executeAction = async (actionType: "FULL_REGENERATE" | "RESET_DEVICES") => {
     setIsActionSubmitting(true);
     setActionSuccessMsg(null);
     setActionErrorMsg(null);
 
     let endpoint = "";
     if (actionType === "FULL_REGENERATE") endpoint = "/api/admin/generate";
-    else if (actionType === "REROLL_SUBGROUP") endpoint = "/api/admin/reroll-subgroup";
     else if (actionType === "RESET_DEVICES") endpoint = "/api/admin/reset-devices";
-    else if (actionType === "FULL_RESET") endpoint = "/api/admin/reset";
 
     try {
       const res = await fetch(endpoint, {
@@ -563,14 +596,21 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             {isAuthenticated && (
               <>
                 <button
-                  onClick={() => {
-                    setPasswordFeedback(null);
-                    setShowPasswordModal(true);
-                  }}
+                  type="button"
+                  onClick={handleOpenQrModal}
+                  className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/10 cursor-pointer"
+                  title="Show Participant Portal QR Code"
+                >
+                  <QrCode className="h-3.5 w-3.5 text-amber-300" />
+                  <span>QR Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPasskeyModal(true)}
                   className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#071d13] px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#0f3422] cursor-pointer"
                 >
                   <Fingerprint className="h-3.5 w-3.5 text-emerald-400" />
@@ -617,10 +657,10 @@ export default function AdminDashboardPage() {
               </div>
 
               <h2 className="text-center font-serif text-2xl font-bold text-white">
-                لوحة تحكم المنظّم
+                Organizer Dashboard
               </h2>
               <p className="mt-2 text-center text-xs text-emerald-200/80">
-                تسجيل الدخول الآمن ببصمة الإصبع عبر Apple Touch ID / Passkey
+                Secure administrative access via Apple Touch ID, Face ID, or Master Password
               </p>
 
               {authError && (
@@ -638,7 +678,7 @@ export default function AdminDashboardPage() {
                     className="flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 py-4 text-sm font-bold text-white shadow-xl transition-all hover:scale-[1.02] hover:brightness-110 disabled:opacity-50 cursor-pointer"
                   >
                     <Fingerprint className="h-6 w-6 text-amber-300" />
-                    <span>{isPasskeyLoading ? "جاري التحقق من البصمة..." : "الدخول عبر بصمة الإصبع (Touch ID)"}</span>
+                    <span>{isPasskeyLoading ? "Verifying Passkey..." : "Sign in with Touch ID / Passkey"}</span>
                   </button>
                 ) : (
                   <button
@@ -647,7 +687,7 @@ export default function AdminDashboardPage() {
                     className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/80 bg-gradient-to-r from-emerald-600 to-emerald-800 py-3.5 text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 cursor-pointer"
                   >
                     <Fingerprint className="h-5 w-5 text-amber-300" />
-                    <span>{isPasskeyLoading ? "جاري تفعيل البصمة..." : "تفعيل وتسجيل بصمة Mac Touch ID الآن"}</span>
+                    <span>{isPasskeyLoading ? "Registering Passkey..." : "Enable Touch ID / Passkey Access"}</span>
                   </button>
                 )}
 
@@ -658,7 +698,7 @@ export default function AdminDashboardPage() {
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-950/70 py-2.5 text-xs font-medium text-emerald-300 transition-colors cursor-pointer"
                   >
                     <Fingerprint className="h-3.5 w-3.5 text-amber-300/80" />
-                    <span>+ تسجيل جهاز جديد / بصمة إضافية</span>
+                    <span>+ Register Additional Device Passkey</span>
                   </button>
                 )}
               </div>
@@ -671,7 +711,7 @@ export default function AdminDashboardPage() {
                   className="mx-auto flex items-center gap-1.5 text-xs text-amber-200/70 hover:text-amber-200 transition-colors cursor-pointer"
                 >
                   <KeyRound className="h-3.5 w-3.5" />
-                  <span>{showPasswordFallback ? "إخفاء خيار كلمة المرور" : "أو الدخول بكلمة المرور اليدوية (Password Fallback)"}</span>
+                  <span>{showPasswordFallback ? "Hide Password Sign-In" : "Sign in with Password instead"}</span>
                 </button>
 
                 {showPasswordFallback && (
@@ -698,7 +738,7 @@ export default function AdminDashboardPage() {
                           setPassword(e.target.value);
                           setAuthError(null);
                         }}
-                        placeholder="أدخل كلمة مرور المنظّم..."
+                        placeholder="Enter administrator password..."
                         required
                         className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-2.5 text-xs text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                       />
@@ -709,7 +749,7 @@ export default function AdminDashboardPage() {
                       disabled={isLoading || !password}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-gradient-to-r from-red-800 to-red-900 py-2.5 text-xs font-bold text-white shadow transition-all hover:brightness-110 disabled:opacity-50 cursor-pointer"
                     >
-                      {isLoading ? <span>Verifying...</span> : <span>الدخول بكلمة المرور</span>}
+                      {isLoading ? <span>Verifying...</span> : <span>Sign In with Password</span>}
                     </button>
                   </form>
                 )}
@@ -837,26 +877,26 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* ===============================================================
-                EVENT CONTROLS TOOLBAR (COMPACT SMALL BUTTONS)
+                EVENT CONTROLS TOOLBAR (APPLE HIG COMPACT CONTROLS)
                =============================================================== */}
-            <div className="rounded-2xl border border-amber-500/30 bg-[#071d13]/90 p-3.5 shadow-xl backdrop-blur-md">
+            <div className="rounded-2xl border border-white/10 bg-[#0a140f]/90 p-3.5 shadow-xl backdrop-blur-xl">
               <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-                {/* Rules Mode Controls */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5 ml-1">
-                    <Sparkles className="h-4 w-4 text-amber-400" />
-                    <span>نظام القرعة:</span>
+                {/* Draw Mode Controls */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="text-xs font-semibold text-white/80 flex items-center gap-1.5 ml-1">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Draw Mode:</span>
                   </span>
 
                   {state.drawMode === "free" ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/60 bg-sky-950/80 px-2.5 py-1 text-xs font-bold text-sky-200">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-950/60 px-2.5 py-0.5 text-xs font-medium text-sky-300">
                       <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-ping" />
-                      <span>عادية (بدون شروط - للتجربة)</span>
+                      <span>Free Random (Classroom Test Mode)</span>
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-950/80 px-2.5 py-1 text-xs font-bold text-emerald-200">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/60 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      <span>رسمية (مفعلة بالشروط)</span>
+                      <span>Official Rules Enforced</span>
                     </span>
                   )}
 
@@ -867,10 +907,10 @@ export default function AdminDashboardPage() {
                         setPendingDrawMode("constrained");
                         setShowDrawModeModal(true);
                       }}
-                      className="flex items-center gap-1.5 rounded-lg border border-emerald-400/60 bg-emerald-700 hover:bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:scale-105 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-800/80 hover:bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
-                      <span>تفعيل الشروط الرسمية</span>
+                      <span>Enable Official Rules</span>
                     </button>
                   ) : (
                     <button
@@ -879,56 +919,44 @@ export default function AdminDashboardPage() {
                         setPendingDrawMode("free");
                         setShowDrawModeModal(true);
                       }}
-                      className="flex items-center gap-1.5 rounded-lg border border-sky-400/60 bg-sky-700 hover:bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:scale-105 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-800/80 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
                     >
                       <Dices className="h-3.5 w-3.5" />
-                      <span>تفعيل القرعة العادية (تجربة)</span>
+                      <span>Enable Free Test Mode</span>
                     </button>
                   )}
                 </div>
 
                 {/* Draw & Device Management Buttons */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Reroll Subgroup */}
+                  {/* Participant Portal QR Code Button */}
                   <button
                     type="button"
-                    onClick={() => setActiveModal("REROLL_SUBGROUP")}
-                    disabled={state.drawMode === "free"}
-                    title={state.drawMode === "free" ? "معطل في وضع القرعة الحرة" : "خلط أعضاء المجموعة الخاصة (24) فقط"}
-                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-bold text-slate-950 shadow transition-all cursor-pointer"
+                    onClick={handleOpenQrModal}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
                   >
-                    <Dices className="h-3.5 w-3.5" />
-                    <span>خلط المجموعة (24)</span>
+                    <QrCode className="h-3.5 w-3.5 text-amber-300" />
+                    <span>Participant QR Code</span>
                   </button>
 
                   {/* Regenerate Full Draw */}
                   <button
                     type="button"
                     onClick={() => setActiveModal("FULL_REGENERATE")}
-                    className="flex items-center gap-1.5 rounded-lg border border-red-500/50 bg-red-900/80 hover:bg-red-800 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-950/70 hover:bg-red-900/80 px-3 py-1.5 text-xs font-medium text-red-200 shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
-                    <span>إعادة سحب القرعة</span>
+                    <span>Regenerate Draw</span>
                   </button>
 
                   {/* Reset All Device Bindings */}
                   <button
                     type="button"
                     onClick={() => setActiveModal("RESET_DEVICES")}
-                    className="flex items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-900/80 hover:bg-sky-800 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/70 hover:bg-sky-900/80 px-3 py-1.5 text-xs font-medium text-sky-200 shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
                   >
                     <Smartphone className="h-3.5 w-3.5" />
-                    <span>فك قفل الأجهزة</span>
-                  </button>
-
-                  {/* Full Event Reset */}
-                  <button
-                    type="button"
-                    onClick={() => setActiveModal("FULL_RESET")}
-                    className="flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-800 hover:bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>إعادة ضبط شاملة</span>
+                    <span>Reset Device Bindings</span>
                   </button>
                 </div>
               </div>
@@ -937,32 +965,32 @@ export default function AdminDashboardPage() {
             {/* ===============================================================
                 2. DEVICE MANAGEMENT & REVEAL TELEMETRY SECTION
                =============================================================== */}
-            <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-amber-500/20 gap-3">
+            <div className="rounded-3xl border border-white/10 bg-[#0a140f]/90 p-6 shadow-2xl backdrop-blur-md">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-white/10 gap-3">
                 <div className="flex items-center gap-2.5">
                   <Smartphone className="h-5 w-5 text-sky-400" />
                   <div>
                     <h3 className="font-serif text-lg font-bold text-white tracking-wide">
                       Device Management & Reveal Telemetry
                     </h3>
-                    <p className="text-xs text-sky-200/80">
-                      Real-time device tracking: Inspect bound devices, operating systems, IP addresses, and exact timestamps of participants who opened their gift.
+                    <p className="text-xs text-white/60">
+                      Real-time device tracking: hardware models, operating systems, IP addresses, and gift reveal timestamps.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-950/60 px-3 py-1 text-xs font-semibold text-sky-300">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-950/60 px-3 py-1 text-xs font-medium text-sky-300">
                     <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
                     <span>{state.devices?.length || 0} Registered Devices</span>
                   </span>
                   <button
                     type="button"
                     onClick={() => setActiveModal("RESET_DEVICES")}
-                    className="flex items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-900/80 hover:bg-sky-800 px-3 py-1 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-900/70 hover:bg-sky-800 px-3 py-1 text-xs font-medium text-white shadow-sm transition-all cursor-pointer"
                   >
                     <Smartphone className="h-3.5 w-3.5" />
-                    <span>فك قفل الأجهزة</span>
+                    <span>Reset Device Bindings</span>
                   </button>
                 </div>
               </div>
@@ -1232,114 +1260,146 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* ===============================================================
-                5. PARTICIPANT STATUS & REGISTRATION DIRECTORY
+                5. PARTICIPANT REGISTRATION & STATUS DIRECTORY (COLLAPSIBLE)
                =============================================================== */}
-            <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-amber-500/20">
-                <div>
-                  <h3 className="font-serif text-lg font-bold text-white">
-                    Participant Registration & Status Directory
-                  </h3>
-                  <p className="mt-0.5 text-xs text-emerald-200/80">
-                    Live overview of all {state.totalParticipants} participants and their personal registration progress.
-                  </p>
+            <div className="rounded-2xl border border-white/10 bg-[#0a140f]/90 p-5 shadow-xl backdrop-blur-xl transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 border border-white/10 text-emerald-300">
+                    <Users className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-serif text-base font-bold text-white">
+                        Participant Registration & Status Directory
+                      </h3>
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-950/60 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                        {state.totalParticipants} Participants
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-white/60">
+                      {state.registeredCount} registered with PIN • {state.revealedCount} revealed • {state.pendingCount} pending
+                    </p>
+                  </div>
                 </div>
 
-                {/* Filter Input */}
-                <input
-                  type="text"
-                  value={filterQuery}
-                  onChange={(e) => setFilterQuery(e.target.value)}
-                  placeholder="Filter participant name..."
-                  className="w-full sm:w-64 rounded-xl border border-amber-500/30 bg-[#0a2618] px-3.5 py-2 text-xs text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none"
-                />
+                <div className="flex items-center gap-2">
+                  {isParticipantDirectoryExpanded && (
+                    <input
+                      type="text"
+                      value={filterQuery}
+                      onChange={(e) => setFilterQuery(e.target.value)}
+                      placeholder="Filter participant name..."
+                      className="w-44 sm:w-56 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-white placeholder-white/30 focus:border-emerald-500 focus:outline-none"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsParticipantDirectoryExpanded((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-all cursor-pointer"
+                  >
+                    <span>
+                      {isParticipantDirectoryExpanded
+                        ? "Collapse"
+                        : `Expand (${state.totalParticipants})`}
+                    </span>
+                    {isParticipantDirectoryExpanded ? (
+                      <ChevronUp className="h-3.5 w-3.5 text-white/70" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-white/70" />
+                    )}
+                  </button>
+                </div>
               </div>
 
-              {/* Table */}
-              <div className="mt-6 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-amber-500/20 text-amber-300">
-                      <th className="py-3 px-3 font-semibold uppercase">Participant</th>
-                      <th className="py-3 px-3 font-semibold uppercase">Device & Network</th>
-                      <th className="py-3 px-3 font-semibold uppercase">PIN Registration</th>
-                      <th className="py-3 px-3 font-semibold uppercase">Gift Reveal</th>
-                      <th className="py-3 px-3 font-semibold uppercase">Reveal Timestamp</th>
-                      <th className="py-3 px-3 font-semibold uppercase text-right">Reset Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-emerald-950/60">
-                    {filteredParticipants.map((p) => {
-                      return (
-                        <tr key={p.id} className="transition-colors hover:bg-emerald-950/40">
-                          <td className="py-3.5 px-3 font-medium text-white">
-                            <div className="flex items-center gap-2">
-                              <span className="text-base">👤</span>
-                              <span className="font-semibold text-sm">{p.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-3.5 px-3">
-                            {p.deviceSummary ? (
-                              <div>
-                                <div className="text-xs font-semibold text-sky-200">
-                                  {p.deviceSummary}
-                                </div>
-                                <div className="text-[10px] text-sky-400/60 font-mono">
-                                  IP: {p.deviceIp || "unknown"}
-                                </div>
+              {/* Table rendered only when expanded */}
+              {isParticipantDirectoryExpanded && (
+                <div className="mt-5 pt-4 border-t border-white/10 overflow-x-auto animate-in fade-in duration-200">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-white/10 text-white/70">
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px]">Participant</th>
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px]">Device & Network</th>
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px]">PIN Registration</th>
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px]">Gift Reveal</th>
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px]">Reveal Timestamp</th>
+                        <th className="py-2.5 px-3 font-semibold uppercase text-[11px] text-right">Reset Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filteredParticipants.map((p) => {
+                        return (
+                          <tr key={p.id} className="transition-colors hover:bg-white/5">
+                            <td className="py-3 px-3 font-medium text-white">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm">👤</span>
+                                <span className="font-semibold text-xs text-white">{p.name}</span>
                               </div>
-                            ) : (
-                              <span className="text-[11px] text-emerald-300/40 font-mono">
-                                — Not Connected
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3">
-                            {p.isRegistered ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
-                                <Check className="h-3 w-3" />
-                                <span>PIN Established</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-950/50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300">
-                                <Clock className="h-3 w-3" />
-                                <span>Awaiting Registration</span>
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3">
-                            {p.isRevealed ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
-                                <Eye className="h-3 w-3" />
-                                <span>Revealed</span>
-                              </span>
-                            ) : (
-                              <span className="text-emerald-300/50 text-[11px]">Unopened</span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3 text-emerald-300/70 font-mono text-[11px]">
-                            {p.revealedAt ? new Date(p.revealedAt).toLocaleString() : "—"}
-                          </td>
-                          <td className="py-3.5 px-3 text-right">
-                            {(p.isRegistered || p.isRevealed || p.deviceSummary) ? (
-                              <button
-                                onClick={() => setResetParticipantTarget(p)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-red-500/40 bg-red-950/50 hover:bg-red-900/80 px-2.5 py-1 text-[11px] font-medium text-red-200 transition-colors cursor-pointer"
-                                title={`Reset ${p.name} only`}
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                <span>Reset User</span>
-                              </button>
-                            ) : (
-                              <span className="text-[10px] text-emerald-300/30 font-mono">— Clean</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              {p.deviceSummary ? (
+                                <div>
+                                  <div className="text-xs font-medium text-sky-200">
+                                    {p.deviceSummary}
+                                  </div>
+                                  <div className="text-[10px] text-sky-400/60 font-mono">
+                                    IP: {p.deviceIp || "unknown"}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-white/30 font-mono">
+                                  — Not Connected
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              {p.isRegistered ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                                  <Check className="h-3 w-3" />
+                                  <span>PIN Established</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-medium text-amber-300">
+                                  <Clock className="h-3 w-3" />
+                                  <span>Awaiting Registration</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              {p.isRevealed ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                                  <Eye className="h-3 w-3" />
+                                  <span>Revealed</span>
+                                </span>
+                              ) : (
+                                <span className="text-white/40 text-[11px]">Unopened</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-white/60 font-mono text-[11px]">
+                              {p.revealedAt ? new Date(p.revealedAt).toLocaleString() : "—"}
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              {(p.isRegistered || p.isRevealed || p.deviceSummary) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setResetParticipantTarget(p)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-950/50 hover:bg-red-900/70 px-2 py-1 text-[11px] font-medium text-red-200 transition-colors cursor-pointer"
+                                  title={`Reset ${p.name} access`}
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  <span>Reset Access</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-white/30 font-mono">— Clean</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1410,59 +1470,7 @@ export default function AdminDashboardPage() {
                 </div>
               )}
 
-              {/* MODAL 2: REROLL SUBGROUP 20 */}
-              {activeModal === "REROLL_SUBGROUP" && (
-                <div>
-                  <div className="flex items-center gap-3 text-amber-400 mb-3">
-                    <div className="p-3 rounded-2xl border border-amber-500/40 bg-amber-950/80">
-                      <Dices className="h-6 w-6 text-amber-300" />
-                    </div>
-                    <div>
-                      <h3 className="font-serif text-lg font-bold text-white">
-                        Confirm Designated Subgroup Reroll
-                      </h3>
-                      <p className="text-xs text-amber-300/80">Assignments for participants outside this subgroup remain untouched</p>
-                    </div>
-                  </div>
-
-                  <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
-                    <p>• <strong>Automatic Backup:</strong> An immediate, complete backup of the current state is stored before changes.</p>
-                    <p>• <strong>Designated Group Only:</strong> Only the 24 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad).</p>
-                    <p>• <strong>Preservation:</strong> Assignments for all other participants remain 100% byte-for-byte identical.</p>
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal(null)}
-                      disabled={isActionSubmitting}
-                      className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => executeAction("REROLL_SUBGROUP")}
-                      disabled={isActionSubmitting}
-                      className="flex items-center gap-2 rounded-xl border border-amber-400 bg-amber-500 hover:bg-amber-400 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
-                    >
-                      {isActionSubmitting ? (
-                        <>
-                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>Rerolling subgroup...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Dices className="h-3.5 w-3.5" />
-                          <span>Confirm 20-Person Subgroup Reroll</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* MODAL 3: RESET DEVICES */}
+              {/* MODAL 2: RESET DEVICES */}
               {activeModal === "RESET_DEVICES" && (
                 <div>
                   <div className="flex items-center gap-3 text-sky-400 mb-3">
@@ -1478,9 +1486,9 @@ export default function AdminDashboardPage() {
                   </div>
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-sky-500/30 bg-sky-950/30 p-4">
-                    <p>• <strong>Device Unlock:</strong> Immediately unlinks all currently registered devices.</p>
+                    <p>• <strong>Device Unlock:</strong> Immediately unlinks all currently registered hardware identifiers.</p>
                     <p>• <strong>Data Preservation:</strong> Does not delete any PINs, does not alter the draw, and leaves reveal statuses intact.</p>
-                    <p>• <strong>Immediate Re-entry:</strong> Any participant who changed their phone or cleared browser data can log in again using their existing PIN.</p>
+                    <p>• <strong>Immediate Re-entry:</strong> Any participant who switched phones or cleared browser data can log in again using their existing PIN.</p>
                   </div>
 
                   <div className="mt-6 flex items-center justify-end gap-3">
@@ -1507,58 +1515,6 @@ export default function AdminDashboardPage() {
                         <>
                           <Smartphone className="h-3.5 w-3.5" />
                           <span>Confirm Device Reset</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* MODAL 4: FULL EVENT RESET */}
-              {activeModal === "FULL_RESET" && (
-                <div>
-                  <div className="flex items-center gap-3 text-emerald-400 mb-3">
-                    <div className="p-3 rounded-2xl border border-emerald-500/40 bg-emerald-950/80">
-                      <RotateCcw className="h-6 w-6 text-emerald-300" />
-                    </div>
-                    <div>
-                      <h3 className="font-serif text-lg font-bold text-white">
-                        Confirm Full Event Reset
-                      </h3>
-                      <p className="text-xs text-emerald-300/80">Clear PINs and device locks while keeping assignments 100% intact</p>
-                    </div>
-                  </div>
-
-                  <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4">
-                    <p>• <strong>Automatic Backup:</strong> An automated timestamped backup is created immediately before any changes.</p>
-                    <p>• <strong>Zero Data Loss:</strong> Secret Santa pairings and all rules (Maysoon ➔ Qais, Diana ➔ Mohammad, Ghazal ⇄ George, etc.) remain 100% untouched.</p>
-                    <p>• <strong>Fresh Start:</strong> Clears all registered participant PINs, resets reveals to 0, and unlinks all bound devices.</p>
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal(null)}
-                      disabled={isActionSubmitting}
-                      className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => executeAction("FULL_RESET")}
-                      disabled={isActionSubmitting}
-                      className="flex items-center gap-2 rounded-xl border border-emerald-400 bg-emerald-600 hover:bg-emerald-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
-                    >
-                      {isActionSubmitting ? (
-                        <>
-                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          <span>Resetting event...</span>
-                        </>
-                      ) : (
-                        <>
-                          <RotateCcw className="h-3.5 w-3.5" />
-                          <span>Confirm Full Event Reset</span>
                         </>
                       )}
                     </button>
@@ -1691,49 +1647,51 @@ export default function AdminDashboardPage() {
               className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
               onClick={() => setShowPasskeyModal(false)}
             />
-            <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-emerald-500/40 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-emerald-500/20">
+            <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
                 <div className="flex items-center gap-2 text-emerald-300">
                   <Fingerprint className="h-5 w-5 text-amber-300" />
-                  <h3 className="font-serif text-lg font-bold text-white">إدارة البصمات (Passkeys)</h3>
+                  <h3 className="font-serif text-lg font-bold text-white">Biometric Passkeys</h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowPasskeyModal(false)}
-                  className="rounded-lg p-1 text-emerald-300 hover:text-white transition-colors"
+                  className="rounded-lg p-1 text-white/70 hover:text-white transition-colors cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
               <div className="mt-4 space-y-4">
-                <p className="text-xs text-emerald-200/80">
-                  الأجهزة المصرّح لها بالدخول إلى لوحة التحكم عبر بصمة الإصبع (Apple Touch ID / Face ID). يمكنك تسجيل بصمة جديدة لأي جهاز أو حذف بصمة قديمة.
+                <p className="text-xs text-white/70">
+                  Hardware-authenticated credentials authorized for Touch ID and Face ID organizer sign-in. You can register a new hardware device or revoke existing keys.
                 </p>
 
                 {registeredPasskeys.length === 0 ? (
-                  <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4 text-center">
-                    <p className="text-xs text-amber-200">لا توجد بصمات مسجلة حالياً على هذا الخادم.</p>
+                  <div className="rounded-2xl border border-amber-500/20 bg-amber-950/20 p-4 text-center">
+                    <p className="text-xs text-amber-200/90">No biometric passkeys are currently registered on this deployment.</p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-emerald-950/80 rounded-2xl border border-emerald-500/20 bg-[#061910] overflow-hidden">
+                  <div className="divide-y divide-white/10 rounded-2xl border border-white/10 bg-[#061910] overflow-hidden">
                     {registeredPasskeys.map((pk) => (
                       <div key={pk.id} className="p-3.5 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-emerald-300 border border-white/10">
                             <Fingerprint className="h-5 w-5 text-amber-300" />
                           </div>
                           <div>
                             <p className="text-xs font-bold text-white">{pk.label}</p>
-                            <p className="text-[10px] text-emerald-300/60 font-mono">
-                              أضيفت في: {new Date(pk.createdAt).toLocaleDateString()}
+                            <p className="text-[10px] text-white/50 font-mono">
+                              Registered: {new Date(pk.createdAt).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
 
                         <button
+                          type="button"
                           onClick={() => handleDeletePasskey(pk.id)}
                           className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/30 bg-red-950/40 hover:bg-red-900/60 text-red-300 transition-colors cursor-pointer"
-                          title="حذف هذه البصمة"
+                          title="Revoke this passkey"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1746,18 +1704,19 @@ export default function AdminDashboardPage() {
                   <button
                     type="button"
                     onClick={() => setShowPasskeyModal(false)}
-                    className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
+                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-white hover:bg-white/10 cursor-pointer"
                   >
-                    إغلاق
+                    Close
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleRegisterPasskey("Mac Touch ID")}
                     disabled={isPasskeyLoading}
-                    className="flex items-center gap-2 rounded-xl border border-amber-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-700 hover:bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-md transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
                   >
                     <Fingerprint className="h-4 w-4 text-amber-300" />
-                    <span>{isPasskeyLoading ? "جاري التسجيل..." : "+ تسجيل بصمة جهاز إضافي"}</span>
+                    <span>{isPasskeyLoading ? "Registering..." : "+ Register Additional Device"}</span>
                   </button>
                 </div>
               </div>
@@ -1777,21 +1736,21 @@ export default function AdminDashboardPage() {
             <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-red-500/40 bg-gradient-to-b from-[#190a0d] to-[#0d0406] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
               <div className="flex items-center gap-3 pb-3 border-b border-red-500/20 text-red-300">
                 <AlertTriangle className="h-6 w-6 text-red-400 shrink-0" />
-                <h3 className="font-serif text-lg font-bold text-white">إعادة ضبط العضو فقط</h3>
+                <h3 className="font-serif text-lg font-bold text-white">Reset Participant Access</h3>
               </div>
 
               <div className="mt-4 space-y-3">
                 <p className="text-xs text-red-100">
-                  هل أنت متأكد من رغبتك في إعادة ضبط العضو:{" "}
+                  Are you sure you want to reset access credentials for:{" "}
                   <strong className="text-amber-300 text-sm block mt-1">
                     {resetParticipantTarget.name}
                   </strong>
                 </p>
 
-                <div className="rounded-xl border border-amber-500/30 bg-amber-950/40 p-3 text-[11px] text-amber-200/90 space-y-1">
-                  <p>• سيتم مسح رمز الـ PIN وحالة الفتح لهذا العضو فقط.</p>
-                  <p>• سيتم فك قفل الجهاز المرتبط به ليتمكن من الدخول مجدداً.</p>
-                  <p className="font-bold text-emerald-300">• القرعة والهدية المخصصة له تبقى محفوظة 100% دون أي تغيير.</p>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-[11px] text-white/80 space-y-1">
+                  <p>• PIN passcode and gift reveal status will be cleared for this participant only.</p>
+                  <p>• Bound hardware identifier will be unlinked so they can log in from any device.</p>
+                  <p className="font-bold text-emerald-300">• Designated Secret Santa assignment and recipient remain 100% intact.</p>
                 </div>
 
                 <div className="pt-3 flex justify-end gap-2.5 border-t border-red-500/20">
@@ -1799,9 +1758,9 @@ export default function AdminDashboardPage() {
                     type="button"
                     onClick={() => setResetParticipantTarget(null)}
                     disabled={isResettingParticipant}
-                    className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer"
+                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 cursor-pointer"
                   >
-                    إلغاء
+                    Cancel
                   </button>
 
                   <button
@@ -1813,12 +1772,12 @@ export default function AdminDashboardPage() {
                     {isResettingParticipant ? (
                       <>
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>جاري إعادة الضبط...</span>
+                        <span>Resetting...</span>
                       </>
                     ) : (
                       <>
                         <RotateCcw className="h-3.5 w-3.5" />
-                        <span>تأكيد إعادة ضبط هذا العضو</span>
+                        <span>Confirm Reset Access</span>
                       </>
                     )}
                   </button>
@@ -1827,6 +1786,7 @@ export default function AdminDashboardPage() {
             </div>
           </div>
         )}
+
         {/* ===================================================================
             DRAW MODE SWITCH CONFIRMATION MODAL
            =================================================================== */}
@@ -1836,46 +1796,46 @@ export default function AdminDashboardPage() {
               className="fixed inset-0 bg-black/85 backdrop-blur-md transition-opacity"
               onClick={() => !isSwitchingMode && setShowDrawModeModal(false)}
             />
-            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/40 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-center gap-3 pb-3 border-b border-amber-500/20 text-amber-300">
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3 pb-3 border-b border-white/10 text-amber-300">
                 <Sparkles className="h-6 w-6 text-amber-400 shrink-0" />
                 <h3 className="font-serif text-lg font-bold text-white">
-                  {pendingDrawMode === "free" ? "تفعيل القرعة العادية (بدون شروط)" : "استعادة القرعة المشروطة (الرسمية)"}
+                  {pendingDrawMode === "free" ? "Switch to Free Draw (Classroom Test Mode)" : "Restore Official Constrained Draw"}
                 </h3>
               </div>
 
               <div className="mt-4 space-y-3">
                 {pendingDrawMode === "free" ? (
                   <>
-                    <p className="text-xs text-emerald-100 leading-relaxed">
-                      هل أنت متأكد من رغبتك في إلغاء الشروط الخاصة وتفعيل القرعة العادية لاختبار وتجربة الموقع غداً أمام الصف؟
+                    <p className="text-xs text-white/90 leading-relaxed">
+                      Are you sure you want to bypass all special rules and activate free derangement for live classroom testing?
                     </p>
                     <div className="rounded-xl border border-sky-500/30 bg-sky-950/40 p-3 text-[11px] text-sky-200/90 space-y-1">
-                      <p>• سيتم توزيع الأسماء عشوائياً 100% بين جميع الـ 56 طالباً دون قيود.</p>
-                      <p>• سيتم حفظ القرعة الرسمية الحالية في نسخة احتياطية آمنة لاستعادتها لاحقاً.</p>
-                      <p>• سيتم تصفير رموز الدخول لتمكين الطلاب من التجربة المباشرة.</p>
+                      <p>• All 56 participants are shuffled purely at random with zero subgroup or directed constraints.</p>
+                      <p>• Official constrained assignments are securely preserved for instant restoration.</p>
+                      <p>• Participant PINs and access sessions are cleared to allow fresh live testing.</p>
                     </div>
                   </>
                 ) : (
                   <>
-                    <p className="text-xs text-emerald-100 leading-relaxed">
-                      هل أنت متأكد من استعادة وتفعيل الشروط الخاصة والقرعة الرسمية؟
+                    <p className="text-xs text-white/90 leading-relaxed">
+                      Are you sure you want to restore official rules and special constraints?
                     </p>
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-[11px] text-emerald-200/90 space-y-1">
-                      <p>• ستتم استعادة كافة القواعد الخاصة والشروط الموجهة ومجموعة الـ 24 طالباً.</p>
-                      <p>• سيتم تصفير الرموز ليكون الموقع جاهزاً للحدث الرسمي الحقيقي.</p>
+                      <p>• Restores directed pairings (Maysoon ➔ Qais, Diana ➔ Mohammad, Ghazal ⇄ George) and the isolated 24-member group.</p>
+                      <p>• Access credentials are reset, ready for the official live gift exchange.</p>
                     </div>
                   </>
                 )}
 
-                <div className="pt-3 flex justify-end gap-2.5 border-t border-amber-500/20">
+                <div className="pt-3 flex justify-end gap-2.5 border-t border-white/10">
                   <button
                     type="button"
                     onClick={() => setShowDrawModeModal(false)}
                     disabled={isSwitchingMode}
-                    className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer"
+                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 cursor-pointer"
                   >
-                    إلغاء
+                    Cancel
                   </button>
 
                   <button
@@ -1891,13 +1851,104 @@ export default function AdminDashboardPage() {
                     {isSwitchingMode ? (
                       <>
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>جاري تطبيق التغيير...</span>
+                        <span>Applying mode switch...</span>
                       </>
                     ) : (
-                      <span>تأكيد تفعيل هذا الوضع</span>
+                      <span>Confirm Mode Switch</span>
                     )}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================
+            PARTICIPANT PORTAL QR CODE MODAL (APPLE DESIGN)
+           =================================================================== */}
+        {showQrModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
+              onClick={() => setShowQrModal(false)}
+            />
+            <div className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-b from-[#111914] to-[#0a0f0d] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200 text-center">
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5 border border-white/10 text-amber-300">
+                <QrCode className="h-6 w-6" />
+              </div>
+
+              <h3 className="font-serif text-lg font-bold text-white">
+                Participant Portal QR Code
+              </h3>
+              <p className="mt-1 text-xs text-white/60">
+                Scan with mobile camera to open the live Secret Santa gift portal
+              </p>
+
+              {/* QR Image Container */}
+              <div className="my-5 flex justify-center">
+                <div className="rounded-2xl bg-white p-3 shadow-xl">
+                  {qrCodeDataUrl ? (
+                    <img
+                      src={qrCodeDataUrl}
+                      alt="Secret Santa QR Code"
+                      width={240}
+                      height={240}
+                      className="rounded-lg"
+                    />
+                  ) : (
+                    <div className="h-60 w-60 flex items-center justify-center text-slate-400">
+                      <RefreshCw className="h-6 w-6 animate-spin" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* URL & Copy Link Bar */}
+              <div className="rounded-xl border border-white/10 bg-black/40 p-2.5 flex items-center justify-between gap-2 text-left">
+                <div className="truncate text-xs font-mono text-emerald-300">
+                  {PRODUCTION_PORTAL_URL}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(PRODUCTION_PORTAL_URL);
+                    setHasCopiedPortalLink(true);
+                    setTimeout(() => setHasCopiedPortalLink(false), 2000);
+                  }}
+                  className="shrink-0 flex items-center gap-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/20 px-2.5 py-1 text-[11px] font-medium text-white transition-colors cursor-pointer"
+                >
+                  {hasCopiedPortalLink ? (
+                    <>
+                      <Check className="h-3 w-3 text-emerald-400" />
+                      <span>Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <a
+                  href={PRODUCTION_PORTAL_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white transition-colors"
+                >
+                  <span>Open URL in new tab</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
               </div>
             </div>
           </div>

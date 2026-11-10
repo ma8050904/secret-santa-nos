@@ -831,7 +831,8 @@ export interface AdminAuditLogEntry {
     | "REGISTER_PASSKEY"
     | "DELETE_PASSKEY"
     | "AUTH_PASSKEY_LOGIN"
-    | "SET_DRAW_MODE";
+    | "SET_DRAW_MODE"
+    | "RESET_AUDIT_LOGS";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -1313,6 +1314,40 @@ export async function recordAdminAuditLog(
   }
 
   return fullEntry;
+}
+
+/**
+ * Resets/clears all administrative activity and login audit records.
+ * Leaves the logging infrastructure fully intact for future events.
+ */
+export async function clearAdminAuditLogs(): Promise<{ success: boolean; clearedCount: number }> {
+  const currentLogs = await getAdminAuditLogs();
+  const clearedCount = currentLogs.length;
+  auditLogsCache = [];
+  const emptySerialized = JSON.stringify([], null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(AUDIT_LOGS_BLOB_KEY, emptySerialized, {
+        access: "private",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.warn("Failed to reset audit logs in Blob:", err);
+    }
+  }
+
+  try {
+    const localDir = path.dirname(getStorageFilePath());
+    const filePath = path.join(localDir, "admin_audit_logs.json");
+    fs.writeFileSync(filePath, emptySerialized, "utf-8");
+  } catch {
+    // ignore
+  }
+
+  return { success: true, clearedCount };
 }
 
 /**
