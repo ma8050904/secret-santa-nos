@@ -18,12 +18,17 @@ export const MANDATORY_RECIPROCAL_B = "George Karkar";
 export const FORBIDDEN_EXCLUSION_A = "Zeina Darawi";
 export const FORBIDDEN_EXCLUSION_B = "Hamza Darawi";
 export const FORBIDDEN_EXCLUSION_C = "Raghad Al-Shobaki";
-export const FORBIDDEN_EXCLUSION_D = "Mohammad Shourati";
+export const FORBIDDEN_EXCLUSION_D = "Mohammad Alshourati";
 
-// Canonical Designated Subgroup (24 participants: 20 original + Raghad + Diana + Fadi + Njoud)
+export const MANDATORY_DIRECTED_GIVER_1 = "Maysoon 🏫";
+export const MANDATORY_DIRECTED_RECIPIENT_1 = "Qais Al-Hadeed";
+
+export const MANDATORY_DIRECTED_GIVER_2 = "Diana 👩‍🏫🛘";
+export const MANDATORY_DIRECTED_RECIPIENT_2 = "Mohammad Alshourati";
+
+// Canonical Designated Subgroup (24 participants: 20 original + Raghad + Diana + Maysoon + Njoud)
 export const SUBGROUP_20_IDS = [
   "p3",  // Diana 👩‍🏫🛘
-  "p5",  // Fadi 👨‍🏫📖
   "p6",  // George Karkar
   "p7",  // George Shammas
   "p8",  // Ghazal Baqleh
@@ -33,25 +38,26 @@ export const SUBGROUP_20_IDS = [
   "p19", // Jude Fanous
   "p24", // Leya Al-Khatib
   "p25", // Malak Hindaileh
-  "p30", // Michael Shamma
-  "p32", // Mohammad Darras
-  "p33", // Mohammad Shourati
-  "p34", // Nardeen Abdallah
-  "p37", // Njoud👩‍🏫📜
-  "p40", // Qais Al-Hadeed
-  "p41", // Raghad Al-Shobaki
-  "p43", // Sanad Al-Hunaiti
-  "p44", // Sarah Rabadi
-  "p47", // Toleen Awwad
-  "p48", // Wasan Abu Hamdeh
-  "p49", // Yara Barjawi
-  "p55", // Zeina Darawi
+  "p30", // Maysoon 🏫
+  "p31", // Michael Shamma
+  "p33", // Mohammad Alshourati
+  "p34", // Mohammad Darras
+  "p35", // Nardeen Abdallah
+  "p38", // Njoud👩‍🏫📜
+  "p41", // Qais Al-Hadeed
+  "p42", // Raghad Al-Shobaki
+  "p44", // Sanad Al-Hunaiti
+  "p45", // Sarah Rabadi
+  "p48", // Toleen Awwad
+  "p49", // Wasan Abu Hamdeh
+  "p50", // Yara Barjawi
+  "p56", // Zeina Darawi
 ] as const;
 
 export const SUBGROUP_20_ID_SET = new Set<string>(SUBGROUP_20_IDS);
 
 // Legacy backward-compatibility constants
-export const TARGET_RECIPIENT = "Mohammad Shourati";
+export const TARGET_RECIPIENT = "Mohammad Alshourati";
 export const TARGET_ALLOWED_GIVERS = [
   "Michael Shamma",
   "Mohammad Darras",
@@ -116,9 +122,12 @@ export function validateDerangement(
 /**
  * Validates all constrained Secret Santa draw requirements:
  * 1. Base derangement properties (unique givers, unique recipients, zero self-assignments).
- * 2. 20-Person Subgroup Isolation (zero edges entering or leaving the 20-person subgroup).
+ * 2. Designated Subgroup Isolation (zero edges entering or leaving the designated subgroup).
  * 3. Mandatory reciprocal pair: Ghazal Baqleh <-> George Karkar.
  * 4. Mandatory mutual exclusion: Zeina Darawi cannot give to or receive from Hamza Darawi.
+ * 5. Mandatory mutual exclusion: Raghad Al-Shobaki cannot give to or receive from Mohammad Alshourati.
+ * 6. Mandatory directed assignment 1: Maysoon 🏫 gives to Qais Al-Hadeed.
+ * 7. Mandatory directed assignment 2: Diana 👩‍🏫🛘 gives to Mohammad Alshourati.
  */
 export function validateConstrainedSecretSantaDraw(
   participants: readonly ParticipantItem[],
@@ -184,7 +193,7 @@ export function validateConstrainedSecretSantaDraw(
     };
   }
 
-  // 4. Mandatory exclusion constraint 2: Raghad ⇎ Mohammad Shourati
+  // 4. Mandatory exclusion constraint 2: Raghad ⇎ Mohammad Alshourati
   if (map.get(FORBIDDEN_EXCLUSION_C) === FORBIDDEN_EXCLUSION_D) {
     return {
       valid: false,
@@ -195,6 +204,22 @@ export function validateConstrainedSecretSantaDraw(
     return {
       valid: false,
       reason: `Mandatory exclusion violation: ${FORBIDDEN_EXCLUSION_D} cannot be assigned to ${FORBIDDEN_EXCLUSION_C}`,
+    };
+  }
+
+  // 5. Mandatory directed assignment 1: Maysoon 🏫 -> Qais Al-Hadeed
+  if (map.has(MANDATORY_DIRECTED_GIVER_1) && map.get(MANDATORY_DIRECTED_GIVER_1) !== MANDATORY_DIRECTED_RECIPIENT_1) {
+    return {
+      valid: false,
+      reason: `Mandatory directed assignment violation: ${MANDATORY_DIRECTED_GIVER_1} must be assigned to ${MANDATORY_DIRECTED_RECIPIENT_1}`,
+    };
+  }
+
+  // 6. Mandatory directed assignment 2: Diana 👩‍🏫🛘 -> Mohammad Alshourati
+  if (map.has(MANDATORY_DIRECTED_GIVER_2) && map.get(MANDATORY_DIRECTED_GIVER_2) !== MANDATORY_DIRECTED_RECIPIENT_2) {
+    return {
+      valid: false,
+      reason: `Mandatory directed assignment violation: ${MANDATORY_DIRECTED_GIVER_2} must be assigned to ${MANDATORY_DIRECTED_RECIPIENT_2}`,
     };
   }
 
@@ -271,17 +296,35 @@ export function generateSecretSantaDerangement(
 export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
   const ghazal = participants.find((p) => p.name === MANDATORY_RECIPROCAL_A);
   const george = participants.find((p) => p.name === MANDATORY_RECIPROCAL_B);
+  const diana = participants.find((p) => p.name === MANDATORY_DIRECTED_GIVER_2);
+  const mohammad = participants.find((p) => p.name === MANDATORY_DIRECTED_RECIPIENT_2);
+  const maysoon = participants.find((p) => p.name === MANDATORY_DIRECTED_GIVER_1);
+  const qais = participants.find((p) => p.name === MANDATORY_DIRECTED_RECIPIENT_1);
 
-  if (!ghazal || !george) {
-    throw new Error(
-      `Mandatory participants missing: ${MANDATORY_RECIPROCAL_A} or ${MANDATORY_RECIPROCAL_B} not found in roster.`
-    );
+  if (!ghazal || !george || !diana || !mohammad || !maysoon || !qais) {
+    throw new Error("Mandatory constrained participants missing from designated subgroup roster.");
   }
 
-  // Remaining participants for the derangement cycle
-  const remaining = participants.filter(
-    (p) => p.name !== MANDATORY_RECIPROCAL_A && p.name !== MANDATORY_RECIPROCAL_B
+  // Participants other than Ghazal, George, Diana, Mohammad, Maysoon, Qais
+  const others = participants.filter(
+    (p) =>
+      p.name !== MANDATORY_RECIPROCAL_A &&
+      p.name !== MANDATORY_RECIPROCAL_B &&
+      p.name !== MANDATORY_DIRECTED_GIVER_2 &&
+      p.name !== MANDATORY_DIRECTED_RECIPIENT_2 &&
+      p.name !== MANDATORY_DIRECTED_GIVER_1 &&
+      p.name !== MANDATORY_DIRECTED_RECIPIENT_1
   );
+
+  // Composite units:
+  // Unit 1: [diana, mohammad] guarantees Diana -> Mohammad
+  // Unit 2: [maysoon, qais] guarantees Maysoon -> Qais
+  // Remaining participants as 1-element units
+  const units: ParticipantItem[][] = [
+    [diana, mohammad],
+    [maysoon, qais],
+    ...others.map((p) => [p]),
+  ];
 
   let attempts = 0;
   const maxAttempts = 10000;
@@ -289,22 +332,27 @@ export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]
   while (attempts < maxAttempts) {
     attempts++;
 
-    // Permute remaining participants uniformly using Sattolo's algorithm
-    const list = [...remaining];
-    for (let i = list.length - 1; i > 0; i--) {
+    // Permute units uniformly
+    const shuffledUnits = [...units];
+    for (let i = shuffledUnits.length - 1; i > 0; i--) {
       const j = crypto.randomInt(0, i);
-      const temp = list[i];
-      list[i] = list[j];
-      list[j] = temp;
+      const temp = shuffledUnits[i];
+      shuffledUnits[i] = shuffledUnits[j];
+      shuffledUnits[j] = temp;
     }
 
-    // Build assignment pairs for remaining participants
+    // Flatten into cycle
+    const cycleParticipants: ParticipantItem[] = [];
+    for (const u of shuffledUnits) {
+      cycleParticipants.push(...u);
+    }
+
     const pairs: AssignmentPair[] = [];
     let hasViolation = false;
 
-    for (let i = 0; i < list.length; i++) {
-      const giver = list[i];
-      const recipient = list[(i + 1) % list.length];
+    for (let i = 0; i < cycleParticipants.length; i++) {
+      const giver = cycleParticipants[i];
+      const recipient = cycleParticipants[(i + 1) % cycleParticipants.length];
 
       // Check exclusion constraint: Zeina <-> Hamza
       if (
@@ -315,7 +363,7 @@ export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]
         break;
       }
 
-      // Check exclusion constraint: Raghad <-> Mohammad Shourati
+      // Check exclusion constraint: Raghad <-> Mohammad Alshourati
       if (
         (giver.name === FORBIDDEN_EXCLUSION_C && recipient.name === FORBIDDEN_EXCLUSION_D) ||
         (giver.name === FORBIDDEN_EXCLUSION_D && recipient.name === FORBIDDEN_EXCLUSION_C)
@@ -353,7 +401,7 @@ export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]
     return pairs;
   }
 
-  throw new Error(`Failed to generate Subgroup 20 draw after ${maxAttempts} attempts.`);
+  throw new Error(`Failed to generate Subgroup 24 draw after ${maxAttempts} attempts.`);
 }
 
 function generateDerangementCyclePairs(participants: readonly ParticipantItem[]): AssignmentPair[] {
@@ -387,9 +435,9 @@ function generateDerangementCyclePairs(participants: readonly ParticipantItem[])
 
 /**
  * Generates a constrained Secret Santa draw satisfying all requirements:
- * If full 48-roster is given:
- * - Subgroup 1 (20 participants): closed internal draw, Ghazal <-> George reciprocal, Zeina <-> Hamza exclusion.
- * - Subgroup 2 (28 participants): closed internal derangement cycle.
+ * If full roster is given:
+ * - Subgroup 1 (24 participants): closed internal draw, Ghazal <-> George reciprocal, Zeina <-> Hamza exclusion, Raghad <-> Mohammad exclusion, Maysoon -> Qais, Diana -> Mohammad.
+ * - Subgroup 2 (32 participants): closed internal derangement cycle.
  */
 export function generateConstrainedSecretSantaDraw(
   participants: readonly ParticipantItem[]

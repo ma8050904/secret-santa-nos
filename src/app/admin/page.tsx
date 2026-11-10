@@ -998,7 +998,7 @@ export default function AdminDashboardPage() {
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
                     <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
-                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 55} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
+                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 56} participants while adhering strictly to all constraints (subgroups, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad).</p>
                     <p>• <strong>Round Reset:</strong> Starts a new round with an incremented version number; reveals reset to 0 so participants can set a fresh PIN.</p>
                   </div>
 
@@ -1050,7 +1050,7 @@ export default function AdminDashboardPage() {
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
                     <p>• <strong>Automatic Backup:</strong> An immediate, complete backup of the current state is stored before changes.</p>
-                    <p>• <strong>Designated Group Only:</strong> Only the 22 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad).</p>
+                    <p>• <strong>Designated Group Only:</strong> Only the 24 subgroup names are rerolled, adhering strictly to constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad).</p>
                     <p>• <strong>Preservation:</strong> Assignments for all other participants remain 100% byte-for-byte identical.</p>
                   </div>
 
