@@ -601,28 +601,11 @@ export default function AdminDashboardPage() {
               <>
                 <button
                   type="button"
-                  onClick={handleOpenQrModal}
-                  className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/10 cursor-pointer"
-                  title="Show Participant Portal QR Code"
-                >
-                  <QrCode className="h-3.5 w-3.5 text-amber-300" />
-                  <span>QR Code</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setShowPasskeyModal(true)}
                   className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#071d13] px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#0f3422] cursor-pointer"
                 >
                   <Fingerprint className="h-3.5 w-3.5 text-emerald-400" />
                   <span>Passkeys ({registeredPasskeys.length})</span>
-                </button>
-                <button
-                  onClick={() => setShowPasswordModal(true)}
-                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-950/60 px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-amber-900/80 cursor-pointer"
-                  title="Change Organizer Master Password"
-                >
-                  <Lock className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Password</span>
                 </button>
                 <button
                   onClick={fetchAdminData}
@@ -984,14 +967,6 @@ export default function AdminDashboardPage() {
                     <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
                     <span>{state.devices?.length || 0} Registered Devices</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setActiveModal("RESET_DEVICES")}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-900/70 hover:bg-sky-800 px-3 py-1 text-xs font-medium text-white shadow-sm transition-all cursor-pointer"
-                  >
-                    <Smartphone className="h-3.5 w-3.5" />
-                    <span>Reset Device Bindings</span>
-                  </button>
                 </div>
               </div>
 

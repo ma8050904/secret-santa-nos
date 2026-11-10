@@ -186,7 +186,7 @@ function createInitialState(): EventState {
   });
 
   return {
-    version: 7,
+    version: 0,
     status: "uninitialized",
     createdAt: new Date().toISOString(),
     generatedAt: null,
@@ -603,7 +603,7 @@ export async function generateAssignments(force = false): Promise<{
   }
 
   state.status = "active";
-  state.version = 7;
+  state.version = 0;
   state.generatedAt = new Date().toISOString();
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
@@ -931,7 +931,7 @@ export async function getAdminSafeState(): Promise<AdminSafeState> {
 
   return {
     status: state.status,
-    version: state.version || 7,
+    version: state.version ?? 0,
     drawMode: state.drawMode || "constrained",
     createdAt: state.createdAt,
     generatedAt: state.generatedAt,
@@ -1611,7 +1611,7 @@ export async function fullEventReset(
   });
 
   // 3. Increment version to invalidate all active session tokens and device bindings
-  state.version = (state.version || 7) + 1;
+  state.version = (state.version ?? 0) + 1;
   state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
   // Clear in-memory caches
@@ -1840,7 +1840,7 @@ export async function rerollSubgroup20(
 
   if (state.drawMode === "free") {
     throw new Error(
-      "لا يمكن خلط المجموعة الخاصة لأن القرعة حالياً في الوضع العادي (Free Mode). يرجى تفعيل وضع الشروط أولاً."
+      "Cannot shuffle special subgroup because the draw is currently in Free Mode. Please activate Constrained Mode first."
     );
   }
 
@@ -1935,7 +1935,7 @@ export async function rerollSubgroup20(
 
   // 5. Encrypt with new masterSalt
   const newMasterSalt = crypto.randomBytes(16).toString("hex");
-  const newVersion = (state.version || 7) + 1;
+  const newVersion = (state.version ?? 0) + 1;
 
   const newParticipantsState = PARTICIPANTS.map((p) => {
     const pair = allAssignments.find((a) => a.giverId === p.id)!;
@@ -2054,7 +2054,7 @@ export async function regenerateFullDraw(
 
   // 3. Encrypt with new masterSalt
   const newMasterSalt = crypto.randomBytes(16).toString("hex");
-  const newVersion = (state.version || 7) + 1;
+  const newVersion = (state.version ?? 0) + 1;
 
   const newParticipantsState = PARTICIPANTS.map((p) => {
     const pair = pairs.find((a) => a.giverId === p.id)!;
@@ -2149,7 +2149,7 @@ export async function setDrawMode(
     }
   }
 
-  const newVersion = (state.version || 7) + 1;
+  const newVersion = (state.version ?? 0) + 1;
   const newDeviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
   if (targetMode === "free") {
@@ -2314,7 +2314,7 @@ export async function setDrawMode(
     version: newVersion,
     message:
       targetMode === "free"
-        ? "تم تفعيل القرعة العادية (بدون شروط) بنجاح. يمكن للطلاب الآن تجربة الموقع واستلام أسماء عشوائية بالكامل دون قيود."
-        : "تمت استعادة وتفعيل شروط القرعة الخاصة بنجاح. جميع القواعد والمجموعات الخاصة مفعلة الآن 100%.",
+        ? "Normal draw mode (unconstrained) activated successfully. Participants can now test the portal with fully randomized pairings."
+        : "Constrained draw mode restored successfully. All rules and special assignments are active.",
   };
 }

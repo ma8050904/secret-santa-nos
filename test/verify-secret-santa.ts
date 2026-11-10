@@ -144,7 +144,7 @@ async function runTests() {
   const state = await getEventState();
   assert(state.participants.length === 56, "Storage contains all 56 participants");
   assert(state.status === "active", "Event draw remains in active status");
-  assert(state.version === 7, "Event round version is 7");
+  assert(state.version === 0, "Event round version is 0");
 
   const allHaveAssignments = state.participants.every(
     (p) => typeof p.encryptedRecipient === "string" && p.encryptedRecipient.length > 0
@@ -566,7 +566,7 @@ async function runTests() {
 
   // 7. Verify all 56 assignments in storage remain 100% byte-for-byte intact
   const finalState = await getEventState();
-  assert(finalState.version === 7, "Event state version is still Round 7");
+  assert(finalState.version === 0, "Event state version is still Round 0");
   assert(finalState.participants.length === 56, "Event participant roster count remains exactly 56");
   assert(finalState.participants.every((p) => p.encryptedRecipient), "All 56 Secret Santa assignments remain byte-for-byte intact");
 
