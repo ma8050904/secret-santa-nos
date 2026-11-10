@@ -3,9 +3,13 @@ import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
 } from "@simplewebauthn/server";
-import { getParticipantBiometricStatus, getDeviceBinding } from "@/lib/storage";
+import {
+  getParticipantBiometricStatus,
+  getDeviceOrHardwareBinding,
+  getAllRegisteredPasskeyCredentials,
+} from "@/lib/storage";
 import { getWebAuthnRpDetails } from "@/lib/admin-auth";
-import { getDeviceIdFromRequest } from "@/lib/session";
+import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -21,14 +25,18 @@ export async function POST(req: NextRequest) {
 
     const { participantId } = body;
     const deviceId = getDeviceIdFromRequest(req);
+    const hwFp = getHardwareFingerprintFromRequest(req);
 
-    // 1. Authoritative Device-Level Binding Check
-    const existingBinding = await getDeviceBinding(deviceId);
+    // 1. Authoritative Device & Hardware Binding Check
+    // Works across Normal, Private, and Incognito browsing windows
+    const existingBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (existingBinding && existingBinding.participantId !== participantId) {
       return NextResponse.json(
         {
           success: false,
           error: `This device is officially registered to ${existingBinding.participantName}. Accessing other accounts from this device is not permitted.`,
+          boundParticipantName: existingBinding.participantName,
+          boundParticipantId: existingBinding.participantId,
         },
         { status: 403 }
       );
@@ -75,7 +83,9 @@ export async function POST(req: NextRequest) {
 
       return response;
     } else {
-      // First-time registration
+      // First-time registration with Silicon-level Hardware Exclusion
+      // Excludes all known credentials so Apple Secure Enclave / TPM refuses duplicate registration on same device
+      const allCredentials = await getAllRegisteredPasskeyCredentials();
       const safeUserName = `${status.name.replace(/[^\w]/g, "").toLowerCase() || "student"}_${participantId.slice(0, 8)}@secretsanta.holiday`;
 
       const options = await generateRegistrationOptions({
@@ -85,6 +95,10 @@ export async function POST(req: NextRequest) {
         userName: safeUserName,
         userDisplayName: status.name,
         attestationType: "none",
+        excludeCredentials: allCredentials.map((id) => ({
+          id,
+          type: "public-key",
+        })),
         authenticatorSelection: {
           authenticatorAttachment: "platform",
           userVerification: "required",

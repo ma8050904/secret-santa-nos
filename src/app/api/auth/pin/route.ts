@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateOrRegisterPin, getDeviceBinding, bindDeviceToParticipant } from "@/lib/storage";
+import { authenticateOrRegisterPin, getDeviceOrHardwareBinding, bindDeviceToParticipant } from "@/lib/storage";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
-import { setSessionCookie, setDeviceCookie, getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
+import {
+  setSessionCookie,
+  setDeviceCookie,
+  getSessionFromRequest,
+  getDeviceIdFromRequest,
+  getHardwareFingerprintFromRequest,
+} from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,8 +28,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "PIN is required" }, { status: 400 });
     }
 
-    // Extract device identifier from request headers or cookie
+    // Extract device identifier and hardware fingerprint from request headers or cookie
     const deviceId = getDeviceIdFromRequest(req);
+    const hwFp = getHardwareFingerprintFromRequest(req);
 
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `${ip}:${participantId}`;
@@ -40,9 +47,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authoritative Device-Level Binding Check
-    // Prevent a device registered to participant A from attempting to authenticate or access participant B
-    const existingDeviceBinding = await getDeviceBinding(deviceId);
+    // 1. Authoritative Device-Level and Hardware Binding Check
+    // Works across Normal, Private, and Incognito browsing windows
+    const existingDeviceBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (existingDeviceBinding && existingDeviceBinding.participantId !== participantId) {
       return NextResponse.json(
         {
@@ -82,8 +89,12 @@ export async function POST(req: NextRequest) {
 
     const userAgent = req.headers.get("user-agent") || "";
 
-    // Bind this device to the authenticated participant authoritatively
-    await bindDeviceToParticipant(deviceId, participantId, result.participant?.name || "", { ip, userAgent });
+    // Bind this device and hardware fingerprint to the authenticated participant authoritatively
+    await bindDeviceToParticipant(deviceId, participantId, result.participant?.name || "", {
+      ip,
+      userAgent,
+      hardwareFingerprint: hwFp || undefined,
+    });
 
     // Successful authentication / registration: reset rate limiter
     resetRateLimit(rateLimitKey);

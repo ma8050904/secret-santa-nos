@@ -1,5 +1,7 @@
 "use client";
 
+import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./fingerprint";
+
 const DEVICE_STORAGE_KEY = "santa_device_v7_clean_id";
 const LEGACY_STORAGE_KEY = "santa_device_id";
 
@@ -77,12 +79,33 @@ export function getOrCreateDeviceId(): string {
 }
 
 /**
- * Returns request headers containing the device identifier.
+ * Returns request headers containing the device identifier and hardware fingerprint.
  */
 export function getDeviceHeaders(): Record<string, string> {
   const deviceId = getOrCreateDeviceId();
+  const hwFp = getCachedHardwareFingerprint();
   return {
     "x-device-id": deviceId,
+    ...(hwFp ? { "x-hardware-fingerprint": hwFp } : {}),
+  };
+}
+
+/**
+ * Returns request headers ensuring the hardware fingerprint is computed asynchronously if not already cached.
+ */
+export async function getAsyncDeviceHeaders(): Promise<Record<string, string>> {
+  const deviceId = getOrCreateDeviceId();
+  let hwFp = getCachedHardwareFingerprint();
+  if (!hwFp) {
+    try {
+      hwFp = await getHardwareFingerprint();
+    } catch {
+      // fallback
+    }
+  }
+  return {
+    "x-device-id": deviceId,
+    ...(hwFp ? { "x-hardware-fingerprint": hwFp } : {}),
   };
 }
 

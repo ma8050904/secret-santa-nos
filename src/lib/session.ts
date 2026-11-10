@@ -115,3 +115,15 @@ export function getDeviceIdFromRequest(req: NextRequest): string {
   // Generate a valid server-side UUID fallback
   return generateServerDeviceId();
 }
+
+export function getHardwareFingerprintFromRequest(req: NextRequest): string | null {
+  const headerFp = req.headers.get("x-hardware-fingerprint");
+  if (headerFp && headerFp.trim().length > 5) {
+    return headerFp.trim().toLowerCase();
+  }
+  const cookieFp = req.cookies.get("santa_hw_fp")?.value;
+  if (cookieFp && cookieFp.trim().length > 5) {
+    return cookieFp.trim().toLowerCase();
+  }
+  return null;
+}

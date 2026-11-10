@@ -95,6 +95,7 @@ export interface ParticipantRuntimeState {
 
 export interface DeviceBindingRecord {
   deviceId: string;
+  hardwareFingerprint?: string;
   participantId: string;
   participantName: string;
   boundAt: string;
@@ -155,6 +156,32 @@ function getLocalDeviceDir(): string {
   return dir;
 }
 
+function getLocalHardwareDeviceDir(): string {
+  const base = getStorageFilePath();
+  const dir = path.join(path.dirname(base), "v7_hardware_devices");
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore
+    }
+  }
+  return dir;
+}
+
+function getLocalPasskeyCredentialsDir(): string {
+  const base = getStorageFilePath();
+  const dir = path.join(path.dirname(base), "v7_all_passkey_credentials");
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore
+    }
+  }
+  return dir;
+}
+
 let inMemoryStateCache: EventState | null = null;
 let inMemoryCacheTimestamp = 0;
 const CACHE_TTL_MS = 4000;
@@ -168,9 +195,11 @@ let writeLock: Promise<void> = Promise.resolve();
 // Concurrency-safe in-memory runtime caches
 const runtimeParticipantCache = new Map<string, ParticipantRuntimeState>();
 const deviceBindingCache = new Map<string, DeviceBindingRecord>();
+const hardwareBindingCache = new Map<string, DeviceBindingRecord>();
 const revealedParticipantIds = new Set<string>();
 const registeredParticipantIds = new Set<string>();
 const passkeyParticipantIds = new Set<string>();
+const allRegisteredCredentialIdsSet = new Set<string>();
 let lastMarkersSyncTimestamp = 0;
 const MARKERS_TTL_MS = 3000;
 
@@ -222,10 +251,11 @@ async function syncMarkers(force = false): Promise<void> {
   // 1. Cloud Blob sync (only when not running in isolated local test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      const [revealedList, registeredList, passkeyList] = await Promise.all([
+      const [revealedList, registeredList, passkeyList, credList] = await Promise.all([
         list({ prefix: "v7/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
         list({ prefix: "v7/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
         list({ prefix: "v7/passkeys/", token: process.env.BLOB_READ_WRITE_TOKEN }),
+        list({ prefix: "v7/all_passkey_credentials/", token: process.env.BLOB_READ_WRITE_TOKEN }),
       ]);
 
       const freshRevealed = new Set<string>();
@@ -246,6 +276,12 @@ async function syncMarkers(force = false): Promise<void> {
         if (id) freshPasskeys.add(id);
       }
 
+      const freshCredentials = new Set<string>();
+      for (const b of credList.blobs) {
+        const id = b.pathname.replace("v7/all_passkey_credentials/", "");
+        if (id) freshCredentials.add(id);
+      }
+
       revealedParticipantIds.clear();
       for (const id of freshRevealed) revealedParticipantIds.add(id);
 
@@ -254,6 +290,9 @@ async function syncMarkers(force = false): Promise<void> {
 
       passkeyParticipantIds.clear();
       for (const id of freshPasskeys) passkeyParticipantIds.add(id);
+
+      allRegisteredCredentialIdsSet.clear();
+      for (const id of freshCredentials) allRegisteredCredentialIdsSet.add(id);
 
       lastMarkersSyncTimestamp = now;
       return;
@@ -268,6 +307,7 @@ async function syncMarkers(force = false): Promise<void> {
     const revealedDir = path.join(localDir, "v7_revealed");
     const registeredDir = path.join(localDir, "v7_registered");
     const passkeysDir = path.join(localDir, "v7_passkeys");
+    const credsDir = path.join(localDir, "v7_all_passkey_credentials");
 
     const freshRevealed = new Set<string>();
     if (fs.existsSync(revealedDir)) {
@@ -287,6 +327,12 @@ async function syncMarkers(force = false): Promise<void> {
       for (const f of files) freshPasskeys.add(f);
     }
 
+    const freshCreds = new Set<string>();
+    if (fs.existsSync(credsDir)) {
+      const files = fs.readdirSync(credsDir);
+      for (const f of files) freshCreds.add(f);
+    }
+
     revealedParticipantIds.clear();
     for (const id of freshRevealed) revealedParticipantIds.add(id);
 
@@ -295,6 +341,9 @@ async function syncMarkers(force = false): Promise<void> {
 
     passkeyParticipantIds.clear();
     for (const id of freshPasskeys) passkeyParticipantIds.add(id);
+
+    allRegisteredCredentialIdsSet.clear();
+    for (const id of freshCreds) allRegisteredCredentialIdsSet.add(id);
 
     lastMarkersSyncTimestamp = now;
   } catch {
@@ -592,8 +641,15 @@ export async function saveParticipantRuntimeState(
         );
       }
       if (state.passkeyCredentialId) {
+        allRegisteredCredentialIdsSet.add(state.passkeyCredentialId);
         promises.push(
-          put(`v7/passkeys/${state.participantId}`, "1", {
+          put(`v7/passkeys/${state.participantId}`, state.passkeyCredentialId, {
+            access: "private",
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          }),
+          put(`v7/all_passkey_credentials/${state.passkeyCredentialId}`, state.participantId, {
             access: "private",
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -633,9 +689,13 @@ export async function saveParticipantRuntimeState(
       fs.writeFileSync(path.join(regDir, state.participantId), "");
     }
     if (state.passkeyCredentialId) {
+      allRegisteredCredentialIdsSet.add(state.passkeyCredentialId);
       const passDir = path.join(localBaseDir, "v7_passkeys");
+      const credsDir = path.join(localBaseDir, "v7_all_passkey_credentials");
       if (!fs.existsSync(passDir)) fs.mkdirSync(passDir, { recursive: true });
-      fs.writeFileSync(path.join(passDir, state.participantId), "");
+      if (!fs.existsSync(credsDir)) fs.mkdirSync(credsDir, { recursive: true });
+      fs.writeFileSync(path.join(passDir, state.participantId), state.passkeyCredentialId);
+      fs.writeFileSync(path.join(credsDir, state.passkeyCredentialId), state.participantId);
     }
     if (state.isRevealed) {
       const revDir = path.join(localBaseDir, "v7_revealed");
@@ -1330,6 +1390,124 @@ export async function getDeviceBinding(
 }
 
 /**
+ * Authoritatively retrieves hardware-level device binding using deterministic hardware fingerprint.
+ * Functions across Normal, Private, and Incognito browsing windows on the exact same physical device.
+ */
+export async function getHardwareDeviceBinding(hwFp: string): Promise<DeviceBindingRecord | null> {
+  if (!hwFp || typeof hwFp !== "string") return null;
+  const cleanFp = hwFp.trim().toLowerCase();
+
+  let resetVersion = 1;
+  try {
+    const state = await getEventState();
+    resetVersion = state.deviceResetVersion || 1;
+  } catch {
+    // fallback
+  }
+
+  // Check in-memory cache
+  if (hardwareBindingCache.has(cleanFp)) {
+    const cached = hardwareBindingCache.get(cleanFp)!;
+    if (cached.resetVersion && cached.resetVersion < resetVersion) {
+      hardwareBindingCache.delete(cleanFp);
+      return null;
+    }
+    return cached;
+  }
+
+  // 1. Check Vercel Private Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const url = `${KNOWN_BLOB_BASE}/v7/hardware_devices/${cleanFp}.json`;
+      const res: any = await get(url, {
+        access: "private",
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+
+      if (res && res.stream) {
+        const text = await new Response(res.stream).text();
+        const parsed: DeviceBindingRecord = JSON.parse(text);
+        if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
+          return null;
+        }
+        hardwareBindingCache.set(cleanFp, parsed);
+        return parsed;
+      }
+    } catch {
+      // ignore miss
+    }
+  }
+
+  // 2. Check local disk
+  try {
+    const dir = getLocalHardwareDeviceDir();
+    const localFile = path.join(dir, `${cleanFp}.json`);
+    if (fs.existsSync(localFile)) {
+      const data = fs.readFileSync(localFile, "utf-8");
+      const parsed: DeviceBindingRecord = JSON.parse(data);
+      if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
+        return null;
+      }
+      hardwareBindingCache.set(cleanFp, parsed);
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+/**
+ * Composite resolver: checks both standard deviceId and client hardware fingerprint.
+ * Blocks any attempt to bypass device restrictions via Incognito mode or cache wiping.
+ */
+export async function getDeviceOrHardwareBinding(
+  deviceId: string,
+  hwFp?: string | null
+): Promise<DeviceBindingRecord | null> {
+  const byDevice = await getDeviceBinding(deviceId);
+  if (byDevice) {
+    return byDevice;
+  }
+  if (hwFp && hwFp.trim().length > 5) {
+    const byHw = await getHardwareDeviceBinding(hwFp);
+    if (byHw) {
+      return byHw;
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns all WebAuthn passkey credential IDs currently registered across all participants.
+ * Used for excludeCredentials to hardware-lock platform authenticators (Touch ID / Face ID / Secure Enclave).
+ */
+export async function getAllRegisteredPasskeyCredentials(): Promise<string[]> {
+  await syncMarkers();
+  const creds = new Set<string>(allRegisteredCredentialIdsSet);
+
+  for (const [, p] of runtimeParticipantCache) {
+    if (p.passkeyCredentialId && p.passkeyCredentialId.trim().length > 0) {
+      creds.add(p.passkeyCredentialId.trim());
+    }
+  }
+
+  try {
+    const state = await getEventState();
+    for (const p of state.participants) {
+      if (p.passkeyCredentialId && p.passkeyCredentialId.trim().length > 0) {
+        creds.add(p.passkeyCredentialId.trim());
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return Array.from(creds);
+}
+
+/**
  * Authoritatively binds a device to an authenticated participant.
  * Prevents race conditions and duplicate multi-account device usage.
  */
@@ -1337,20 +1515,32 @@ export async function bindDeviceToParticipant(
   deviceId: string,
   participantId: string,
   participantName: string,
-  meta?: { ip?: string; userAgent?: string }
+  meta?: { ip?: string; userAgent?: string; hardwareFingerprint?: string }
 ): Promise<{ success: boolean; error?: string }> {
   if (!deviceId || typeof deviceId !== "string") {
     return { success: false, error: "Invalid device identifier." };
   }
   const cleanId = deviceId.trim().toLowerCase();
+  const cleanHwFp = meta?.hardwareFingerprint?.trim().toLowerCase();
 
-  // Check existing binding for race conditions
+  // Check existing device binding
   const existing = await getDeviceBinding(cleanId);
   if (existing && existing.participantId !== participantId) {
     return {
       success: false,
       error: `This device is officially registered to ${existing.participantName}.`,
     };
+  }
+
+  // Check existing hardware binding
+  if (cleanHwFp && cleanHwFp.length > 5) {
+    const existingHw = await getHardwareDeviceBinding(cleanHwFp);
+    if (existingHw && existingHw.participantId !== participantId) {
+      return {
+        success: false,
+        error: `This physical device is already registered to ${existingHw.participantName}. Accessing multiple accounts from the same physical device is strictly forbidden.`,
+      };
+    }
   }
 
   const parsed = parseUserAgentDetails(meta?.userAgent || existing?.userAgent);
@@ -1367,6 +1557,7 @@ export async function bindDeviceToParticipant(
 
   const record: DeviceBindingRecord = {
     deviceId: cleanId,
+    hardwareFingerprint: cleanHwFp || existing?.hardwareFingerprint,
     participantId,
     participantName,
     boundAt: existing?.boundAt || new Date().toISOString(),
@@ -1382,15 +1573,18 @@ export async function bindDeviceToParticipant(
     resetVersion,
   };
 
-  // Update in-memory cache
+  // Update in-memory caches
   deviceBindingCache.set(cleanId, record);
+  if (cleanHwFp && cleanHwFp.length > 5) {
+    hardwareBindingCache.set(cleanHwFp, record);
+  }
 
   const serialized = JSON.stringify(record, null, 2);
 
   // 1. Persist to Vercel Private Blob
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      await Promise.all([
+      const blobPromises = [
         put(`v7/devices/${cleanId}.json`, serialized, {
           access: "private",
           addRandomSuffix: false,
@@ -1403,7 +1597,18 @@ export async function bindDeviceToParticipant(
           allowOverwrite: true,
           token: process.env.BLOB_READ_WRITE_TOKEN,
         }),
-      ]);
+      ];
+      if (cleanHwFp && cleanHwFp.length > 5) {
+        blobPromises.push(
+          put(`v7/hardware_devices/${cleanHwFp}.json`, serialized, {
+            access: "private",
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          })
+        );
+      }
+      await Promise.all(blobPromises);
     } catch (err) {
       console.error("Critical: Failed to save device binding to Vercel Blob:", err);
     }
@@ -1416,6 +1621,12 @@ export async function bindDeviceToParticipant(
     const tempPath = `${filePath}.${Date.now()}.${crypto.randomBytes(3).toString("hex")}.tmp`;
     fs.writeFileSync(tempPath, serialized, "utf-8");
     fs.renameSync(tempPath, filePath);
+
+    if (cleanHwFp && cleanHwFp.length > 5) {
+      const hwDir = getLocalHardwareDeviceDir();
+      const hwFilePath = path.join(hwDir, `${cleanHwFp}.json`);
+      fs.writeFileSync(hwFilePath, serialized, "utf-8");
+    }
   } catch {
     // ignore
   }
@@ -2417,12 +2628,22 @@ export async function regenerateFullDraw(
   registeredParticipantIds.clear();
   passkeyParticipantIds.clear();
   deviceBindingCache.clear();
+  hardwareBindingCache.clear();
+  allRegisteredCredentialIdsSet.clear();
   lastMarkersSyncTimestamp = 0;
 
   // Clear local device & marker directories
   try {
     const localDir = path.dirname(getStorageFilePath());
-    for (const sub of ["v7_revealed", "v7_registered", "v7_passkeys", "v7_participants", "v7_devices"]) {
+    for (const sub of [
+      "v7_revealed",
+      "v7_registered",
+      "v7_passkeys",
+      "v7_all_passkey_credentials",
+      "v7_participants",
+      "v7_devices",
+      "v7_hardware_devices",
+    ]) {
       const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
       if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
         fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
@@ -2434,6 +2655,15 @@ export async function regenerateFullDraw(
       for (const f of files) {
         if (f.endsWith(".json")) {
           fs.unlinkSync(/*turbopackIgnore: true*/ path.join(dir, f));
+        }
+      }
+    }
+    const hwDir = getLocalHardwareDeviceDir();
+    if (fs.existsSync(/*turbopackIgnore: true*/ hwDir)) {
+      const files = fs.readdirSync(/*turbopackIgnore: true*/ hwDir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          fs.unlinkSync(/*turbopackIgnore: true*/ path.join(hwDir, f));
         }
       }
     }

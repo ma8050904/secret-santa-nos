@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revealRecipientWithPin, revealRecipientWithBiometric, getDeviceBinding, recordDeviceReveal } from "@/lib/storage";
-import { getSessionFromRequest, getDeviceIdFromRequest } from "@/lib/session";
+import { revealRecipientWithPin, revealRecipientWithBiometric, getDeviceOrHardwareBinding, recordDeviceReveal } from "@/lib/storage";
+import { getSessionFromRequest, getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -18,8 +18,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Participant ID is required" }, { status: 400 });
     }
 
-    // Extract device identifier
+    // Extract device identifier and hardware fingerprint
     const deviceId = getDeviceIdFromRequest(req);
+    const hwFp = getHardwareFingerprintFromRequest(req);
 
     // Rate limiting key: combines client IP and participant ID
     const rateLimitKey = `reveal:${ip}:${participantId}`;
@@ -35,8 +36,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authoritative Device-Level Binding Check
-    const deviceBinding = await getDeviceBinding(deviceId);
+    // 1. Authoritative Device-Level and Hardware Binding Check
+    // Works across Normal, Private, and Incognito browsing windows
+    const deviceBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (deviceBinding && deviceBinding.participantId !== participantId) {
       return NextResponse.json(
         {

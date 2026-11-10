@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDeviceBinding } from "@/lib/storage";
-import { getDeviceIdFromRequest } from "@/lib/session";
+import { getDeviceOrHardwareBinding } from "@/lib/storage";
+import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const deviceId = getDeviceIdFromRequest(req);
-    const binding = await getDeviceBinding(deviceId);
+    const hwFp = getHardwareFingerprintFromRequest(req);
+    const binding = await getDeviceOrHardwareBinding(deviceId, hwFp);
 
     if (binding) {
       return NextResponse.json({

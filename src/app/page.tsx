@@ -11,10 +11,12 @@ import { SantaChatModal } from "@/components/SantaChatModal";
 import { PARTICIPANTS } from "@/lib/constants";
 import {
   getDeviceHeaders,
+  getAsyncDeviceHeaders,
   getStoredBoundParticipant,
   setStoredBoundParticipant,
   clearStoredBoundParticipant,
 } from "@/lib/device";
+import { getHardwareFingerprint } from "@/lib/fingerprint";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
 const DEFAULT_PARTICIPANTS: ParticipantItem[] = PARTICIPANTS.map((p) => ({
@@ -199,11 +201,12 @@ function SecretSantaApp() {
     }
   }, []);
 
-  // Check existing device binding
+  // Check existing device and hardware binding
   const checkDeviceStatus = useCallback(async () => {
     try {
+      const headers = await getAsyncDeviceHeaders();
       const res = await fetch(`/api/auth/device-status?t=${Date.now()}`, {
-        headers: getDeviceHeaders(),
+        headers,
         cache: "no-store",
       });
       const data = await res.json();
@@ -231,6 +234,7 @@ function SecretSantaApp() {
   }, []);
 
   useEffect(() => {
+    getHardwareFingerprint().catch(() => {});
     loadParticipants(true);
     checkSession();
     checkDeviceStatus();

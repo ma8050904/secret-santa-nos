@@ -8,9 +8,15 @@ import {
   registerParticipantBiometric,
   authenticateParticipantBiometric,
   bindDeviceToParticipant,
+  getDeviceOrHardwareBinding,
 } from "@/lib/storage";
 import { getWebAuthnRpDetails } from "@/lib/admin-auth";
-import { setSessionCookie, setDeviceCookie, getDeviceIdFromRequest } from "@/lib/session";
+import {
+  setSessionCookie,
+  setDeviceCookie,
+  getDeviceIdFromRequest,
+  getHardwareFingerprintFromRequest,
+} from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +35,20 @@ export async function POST(req: NextRequest) {
 
     const { participantId, mode, response: clientResponse } = body;
     const deviceId = getDeviceIdFromRequest(req);
+    const hwFp = getHardwareFingerprintFromRequest(req);
     const { rpID, origin } = getWebAuthnRpDetails(req);
+
+    // Authoritative Device & Hardware Binding Check
+    const existingBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
+    if (existingBinding && existingBinding.participantId !== participantId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This device is officially registered to ${existingBinding.participantName}. Accessing other accounts from this device is not permitted.`,
+        },
+        { status: 403 }
+      );
+    }
 
     // Read unified or legacy challenge cookie
     const rawChallengeCookie =
@@ -88,6 +107,7 @@ export async function POST(req: NextRequest) {
       bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
         ip,
         userAgent,
+        hardwareFingerprint: hwFp || undefined,
       }).catch((err) => console.warn("Background device binding notice:", err));
 
       const response = NextResponse.json({
@@ -158,6 +178,7 @@ export async function POST(req: NextRequest) {
       bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
         ip,
         userAgent,
+        hardwareFingerprint: hwFp || undefined,
       }).catch((err) => console.warn("Background device binding notice:", err));
 
       const response = NextResponse.json({

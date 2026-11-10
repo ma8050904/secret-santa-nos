@@ -9,7 +9,7 @@ import {
   WebAuthnAbortService,
 } from "@simplewebauthn/browser";
 import { ParticipantItem } from "./ParticipantGrid";
-import { getDeviceHeaders, setStoredBoundParticipant } from "@/lib/device";
+import { getDeviceHeaders, getAsyncDeviceHeaders, setStoredBoundParticipant } from "@/lib/device";
 
 interface PinAuthModalProps {
   participant: ParticipantItem;
@@ -33,6 +33,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lockoutSec, setLockoutSec] = useState<number | null>(null);
+  const [isDeviceBlocked, setIsDeviceBlocked] = useState(false);
 
   // Active authentication tab: defaults to biometric if supported, else pin
   const [activeTab, setActiveTab] = useState<"biometric" | "pin">(() => {
@@ -123,19 +124,26 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
     }, 14000);
 
     try {
+      const headers = await getAsyncDeviceHeaders();
+
       // Step 1: Request options from unified endpoint
       const optRes = await fetch("/api/auth/biometric/options", {
         method: "POST",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...getDeviceHeaders(),
+          ...headers,
         },
         body: JSON.stringify({ participantId: participant.id }),
       });
 
       const optData = await optRes.json();
       if (!optRes.ok || !optData.success) {
+        if (optRes.status === 403 || String(optData.error || "").includes("officially registered")) {
+          setError(optData.error || "This device is registered to another participant.");
+          setIsDeviceBlocked(true);
+          return;
+        }
         throw new Error(optData.error || "Failed to initialize biometric check.");
       }
 
@@ -153,7 +161,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...getDeviceHeaders(),
+          ...headers,
         },
         body: JSON.stringify({
           participantId: participant.id,
@@ -164,6 +172,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
       const verifyData = await verifyRes.json();
       if (!verifyRes.ok || !verifyData.success) {
+        if (verifyRes.status === 403 || String(verifyData.error || "").includes("officially registered")) {
+          setError(verifyData.error || "This device is registered to another participant.");
+          setIsDeviceBlocked(true);
+          return;
+        }
         throw new Error(verifyData.error || "Biometric verification failed.");
       }
 
@@ -189,6 +202,19 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       }
       cancelActiveCeremony();
       setIsBiometricLoading(false);
+
+      const isHardwareExcluded =
+        err?.name === "InvalidStateError" ||
+        String(err?.message || "").includes("already registered") ||
+        String(err?.message || "").includes("excluded");
+
+      if (isHardwareExcluded) {
+        setError(
+          "This device is already registered to another participant. Each participant must use their own personal device."
+        );
+        setIsDeviceBlocked(true);
+        return;
+      }
 
       const isUserCancellation =
         err?.name === "NotAllowedError" ||
@@ -270,11 +296,12 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
     setIsSubmitting(true);
 
     try {
+      const headers = await getAsyncDeviceHeaders();
       const res = await fetch("/api/auth/pin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...getDeviceHeaders(),
+          ...headers,
         },
         body: JSON.stringify({
           participantId: participant.id,
@@ -290,6 +317,9 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
             id: data.boundParticipantId,
             name: data.boundParticipantName,
           });
+        }
+        if (res.status === 403 || String(data.error || "").includes("officially registered")) {
+          setIsDeviceBlocked(true);
         }
         setError(data.error || "Authentication failed.");
         if (res.status === 429) {
@@ -335,36 +365,61 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         </button>
 
         <div className="text-center pt-2">
-          {/* Method Switcher Tabs (Visible when biometrics is supported) */}
-          {isBiometricSupported && (
-            <div className="flex rounded-2xl bg-[#06180e] p-1 border border-amber-500/25 mb-5 shadow-inner">
-              <button
-                type="button"
-                onClick={switchToBiometric}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "biometric"
-                    ? "bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md border border-emerald-400/40"
-                    : "text-emerald-300/70 hover:text-white"
-                }`}
-              >
-                <Fingerprint className="h-4 w-4 text-amber-300" />
-                <span>Face ID / Passcode</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={switchToPin}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "pin"
-                    ? "bg-gradient-to-r from-red-800 to-red-700 text-white shadow-md border border-amber-400/40"
-                    : "text-emerald-300/70 hover:text-white"
-                }`}
-              >
-                <KeyRound className="h-4 w-4 text-amber-300" />
-                <span>4-Digit PIN</span>
-              </button>
+          {/* Security Device Block Screen */}
+          {isDeviceBlocked ? (
+            <div className="py-4">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-red-500/50 bg-gradient-to-br from-red-950 to-red-900 shadow-xl">
+                <ShieldAlert className="h-9 w-9 text-red-400" />
+              </div>
+              <h3 className="font-serif text-xl font-bold text-white tracking-wide">
+                Device Binding Locked
+              </h3>
+              <p className="mt-3 text-xs text-red-200/90 leading-relaxed bg-red-950/60 p-3.5 rounded-xl border border-red-500/30">
+                {error ||
+                  "This physical device is officially registered to another participant. Multiple accounts on one device are not permitted."}
+              </p>
+              <div className="mt-6">
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="w-full rounded-2xl border border-amber-500/40 bg-gradient-to-r from-emerald-800 to-teal-900 py-3 text-xs font-bold text-white shadow-lg transition-transform hover:scale-[1.02] cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          )}
+          ) : (
+            <>
+              {/* Method Switcher Tabs (Visible when biometrics is supported) */}
+              {isBiometricSupported && (
+                <div className="flex rounded-2xl bg-[#06180e] p-1 border border-amber-500/25 mb-5 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={switchToBiometric}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === "biometric"
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md border border-emerald-400/40"
+                        : "text-emerald-300/70 hover:text-white"
+                    }`}
+                  >
+                    <Fingerprint className="h-4 w-4 text-amber-300" />
+                    <span>Face ID / Passcode</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={switchToPin}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === "pin"
+                        ? "bg-gradient-to-r from-red-800 to-red-700 text-white shadow-md border border-amber-400/40"
+                        : "text-emerald-300/70 hover:text-white"
+                    }`}
+                  >
+                    <KeyRound className="h-4 w-4 text-amber-300" />
+                    <span>4-Digit PIN</span>
+                  </button>
+                </div>
+              )}
 
           {/* =========================================================================
               TAB 1: BIOMETRIC SCANNING VIEW
@@ -508,8 +563,10 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
               )}
             </>
           )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
+  </div>
+</div>
   );
 };
