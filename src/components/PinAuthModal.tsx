@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { ArrowRight, KeyRound, Eye, EyeOff, Fingerprint, ShieldCheck } from "lucide-react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { ArrowRight, KeyRound, Eye, EyeOff, Fingerprint } from "lucide-react";
 import { startRegistration, startAuthentication, platformAuthenticatorIsAvailable } from "@simplewebauthn/browser";
 import { ParticipantItem } from "./ParticipantGrid";
 import { getDeviceHeaders, setStoredBoundParticipant } from "@/lib/device";
@@ -33,23 +33,10 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [isBiometricLoading, setIsBiometricLoading] = useState(false);
   const [showPinFallback, setShowPinFallback] = useState(false);
-
-  useEffect(() => {
-    platformAuthenticatorIsAvailable()
-      .then((supported) => {
-        setIsBiometricSupported(Boolean(supported));
-        if (!supported) {
-          setShowPinFallback(true);
-        }
-      })
-      .catch(() => {
-        setIsBiometricSupported(false);
-        setShowPinFallback(true);
-      });
-  }, []);
+  const autoTriggeredRef = useRef(false);
 
   // Biometric Authentication (Face ID / Touch ID / Native Device Passcode)
-  const handleBiometricAuth = async () => {
+  const handleBiometricAuth = useCallback(async () => {
     setError(null);
     setIsBiometricLoading(true);
 
@@ -67,7 +54,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
         const optData = await optRes.json();
         if (!optRes.ok || !optData.success) {
-          setError(optData.error || "Failed to start biometric authentication.");
+          setShowPinFallback(true);
           setIsBiometricLoading(false);
           return;
         }
@@ -89,6 +76,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         const verifyData = await verifyRes.json();
         if (!verifyRes.ok || !verifyData.success) {
           setError(verifyData.error || "Biometric authentication failed.");
+          setShowPinFallback(true);
           setIsBiometricLoading(false);
           return;
         }
@@ -114,7 +102,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
         const optData = await optRes.json();
         if (!optRes.ok || !optData.success) {
-          setError(optData.error || "Failed to initialize biometric registration.");
+          setShowPinFallback(true);
           setIsBiometricLoading(false);
           return;
         }
@@ -136,6 +124,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         const verifyData = await verifyRes.json();
         if (!verifyRes.ok || !verifyData.success) {
           setError(verifyData.error || "Biometric registration failed.");
+          setShowPinFallback(true);
           setIsBiometricLoading(false);
           return;
         }
@@ -150,14 +139,39 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         });
       }
     } catch (err: unknown) {
-      console.error("Biometric auth error:", err);
-      const msg = err instanceof Error ? err.message : "Authentication canceled.";
-      if (!msg.toLowerCase().includes("abort") && !msg.toLowerCase().includes("cancel")) {
-        setError(msg);
-      }
+      console.log("Biometric auto-prompt fallback:", err);
+      // Automatically fallback to PIN interface if canceled or no lock found
+      setShowPinFallback(true);
       setIsBiometricLoading(false);
     }
-  };
+  }, [participant, onSuccess]);
+
+  // Auto-detect biometric availability and immediately fire Face ID / Touch ID / Passcode prompt
+  useEffect(() => {
+    let isMounted = true;
+    platformAuthenticatorIsAvailable()
+      .then((supported) => {
+        if (!isMounted) return;
+        setIsBiometricSupported(Boolean(supported));
+        if (!supported) {
+          // No device lock / platform authenticator found -> auto-switch to PIN entry
+          setShowPinFallback(true);
+        } else if (!autoTriggeredRef.current) {
+          autoTriggeredRef.current = true;
+          // Supported -> automatically pop up Face ID / Touch ID / Passcode
+          handleBiometricAuth();
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setIsBiometricSupported(false);
+        setShowPinFallback(true);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [handleBiometricAuth]);
 
   // Traditional PIN Fallback Submit
   const handlePinSubmit = async (e: React.FormEvent) => {
@@ -242,109 +256,113 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         </button>
 
         <div className="text-center pt-2">
-          {/* Header Icon */}
-          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/40 bg-gradient-to-br from-red-800 to-emerald-950 shadow-lg">
-            {isBiometricSupported ? (
-              <Fingerprint className="h-7 w-7 text-amber-300 animate-pulse" />
-            ) : (
-              <KeyRound className="h-7 w-7 text-amber-300" />
-            )}
-          </div>
-
-          <h3 className="font-serif text-xl font-bold text-white tracking-wide">
-            {participant.name}
-          </h3>
-          <p className="mt-1 text-xs text-emerald-200/70">
-            {isBiometricSupported
-              ? "Verify with Face ID, Touch ID, or Device Passcode"
-              : "Enter your personal PIN (create on first visit)"}
-          </p>
-
-          {/* Error Message */}
-          {error && (
-            <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/80 p-2.5 text-center text-xs text-red-200">
-              {error}
-              {lockoutSec && (
-                <p className="mt-1 font-semibold text-amber-300">
-                  Retry in {lockoutSec}s
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Primary Biometric Action (Apple Face ID / Touch ID / Phone Passcode) */}
-          {isBiometricSupported && (
-            <div className="mt-5 space-y-3">
-              <button
-                type="button"
-                onClick={handleBiometricAuth}
-                disabled={isBiometricLoading}
-                className="group flex w-full items-center justify-center gap-3 rounded-2xl border-2 border-emerald-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 py-4 text-sm font-bold text-white shadow-[0_4px_25px_rgba(5,150,105,0.4)] transition-all hover:scale-[1.02] hover:brightness-110 disabled:opacity-50 cursor-pointer"
-              >
-                <Fingerprint className="h-5 w-5 text-amber-300 animate-pulse" />
-                <span>
-                  {isBiometricLoading
-                    ? "Verifying Device Lock..."
-                    : participant.hasPasskey
-                    ? "Unlock with Face ID / Passcode"
-                    : "Continue with Face ID / Passcode"}
-                </span>
-              </button>
-
-              <div className="flex items-center justify-center pt-1">
+          {/* Active Biometric Scanning State */}
+          {isBiometricLoading && !showPinFallback ? (
+            <div className="py-4">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/50 bg-gradient-to-br from-emerald-600/30 to-amber-500/20 shadow-xl">
+                <Fingerprint className="h-9 w-9 text-amber-300 animate-pulse" />
+              </div>
+              <h3 className="font-serif text-xl font-bold text-white tracking-wide">
+                {participant.name}
+              </h3>
+              <p className="mt-2 text-xs text-emerald-200/80">
+                Verifying with Face ID, Touch ID, or Passcode...
+              </p>
+              <div className="mt-6">
                 <button
                   type="button"
-                  onClick={() => setShowPinFallback((prev) => !prev)}
-                  className="flex items-center gap-1.5 text-xs text-amber-200/60 hover:text-amber-200 transition-colors cursor-pointer"
-                >
-                  <KeyRound className="h-3 w-3" />
-                  <span>{showPinFallback ? "Hide PIN option" : "Or use a 4-digit PIN instead"}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* PIN Fallback Form */}
-          {(showPinFallback || !isBiometricSupported) && (
-            <form onSubmit={handlePinSubmit} className="mt-5 space-y-4 text-left border-t border-emerald-900/60 pt-4">
-              <div className="relative">
-                <input
-                  type={showPin ? "text" : "password"}
-                  value={pin}
-                  onChange={(e) => {
-                    setPin(e.target.value);
-                    setError(null);
+                  onClick={() => {
+                    setIsBiometricLoading(false);
+                    setShowPinFallback(true);
                   }}
-                  placeholder="Enter PIN (min 4 characters)..."
-                  autoFocus={!isBiometricSupported}
-                  required
-                  disabled={Boolean(lockoutSec) || isSubmitting}
-                  className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] pr-11 pl-4 py-3.5 text-center font-mono text-base tracking-widest text-amber-300 placeholder-emerald-400/30 shadow-inner focus:border-amber-400 focus:bg-[#0c2a1c] focus:ring-2 focus:ring-amber-400/30 focus:outline-none disabled:opacity-50"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPin(!showPin)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-amber-400/70 hover:text-white cursor-pointer"
+                  className="text-xs text-amber-200/70 hover:text-amber-200 underline cursor-pointer"
                 >
-                  {showPin ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  Enter 4-digit PIN instead
                 </button>
               </div>
+            </div>
+          ) : (
+            /* PIN Fallback State (Automatic if no lock or biometric canceled) */
+            <>
+              {/* Header Icon */}
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/40 bg-gradient-to-br from-red-800 to-emerald-950 shadow-lg">
+                <KeyRound className="h-7 w-7 text-amber-300" />
+              </div>
 
-              <button
-                type="submit"
-                disabled={isSubmitting || !pin.trim() || Boolean(lockoutSec)}
-                className="group flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-400/50 bg-gradient-to-r from-red-700 via-red-600 to-red-800 py-3.5 text-sm font-bold tracking-wide text-white shadow-[0_4px_20px_rgba(185,28,28,0.5)] transition-all hover:brightness-110 hover:shadow-[0_6px_25px_rgba(185,28,28,0.7)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <span>Verifying PIN...</span>
-                ) : (
-                  <>
-                    <span>Unlock Secret Santa</span>
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-                  </>
-                )}
-              </button>
-            </form>
+              <h3 className="font-serif text-xl font-bold text-white tracking-wide">
+                {participant.name}
+              </h3>
+              <p className="mt-1 text-xs text-emerald-200/70">
+                Enter your personal PIN (min 4 characters)
+              </p>
+
+              {/* Error Message */}
+              {error && (
+                <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/80 p-2.5 text-center text-xs text-red-200">
+                  {error}
+                  {lockoutSec && (
+                    <p className="mt-1 font-semibold text-amber-300">
+                      Retry in {lockoutSec}s
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* PIN Input Form */}
+              <form onSubmit={handlePinSubmit} className="mt-5 space-y-4 text-left">
+                <div className="relative">
+                  <input
+                    type={showPin ? "text" : "password"}
+                    value={pin}
+                    onChange={(e) => {
+                      setPin(e.target.value);
+                      setError(null);
+                    }}
+                    placeholder="Enter PIN (min 4 characters)..."
+                    autoFocus
+                    required
+                    disabled={Boolean(lockoutSec) || isSubmitting}
+                    className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] pr-11 pl-4 py-3.5 text-center font-mono text-base tracking-widest text-amber-300 placeholder-emerald-400/30 shadow-inner focus:border-amber-400 focus:bg-[#0c2a1c] focus:ring-2 focus:ring-amber-400/30 focus:outline-none disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-amber-400/70 hover:text-white cursor-pointer"
+                  >
+                    {showPin ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !pin.trim() || Boolean(lockoutSec)}
+                  className="group flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-400/50 bg-gradient-to-r from-red-700 via-red-600 to-red-800 py-3.5 text-sm font-bold tracking-wide text-white shadow-[0_4px_20px_rgba(185,28,28,0.5)] transition-all hover:brightness-110 hover:shadow-[0_6px_25px_rgba(185,28,28,0.7)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <span>Verifying PIN...</span>
+                  ) : (
+                    <>
+                      <span>Unlock Secret Santa</span>
+                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Optional Retry Button for Biometrics */}
+              {isBiometricSupported && (
+                <div className="mt-4 pt-3 border-t border-emerald-900/60 text-center">
+                  <button
+                    type="button"
+                    onClick={handleBiometricAuth}
+                    className="inline-flex items-center gap-1.5 text-xs text-emerald-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Fingerprint className="h-3.5 w-3.5 text-amber-300" />
+                    <span>Try Face ID / Passcode again</span>
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
