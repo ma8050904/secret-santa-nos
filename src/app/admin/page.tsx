@@ -24,7 +24,11 @@ import {
   X,
   Laptop,
   Globe,
+  Fingerprint,
+  KeyRound,
+  Trash2,
 } from "lucide-react";
+import { startAuthentication, startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { Snowfall } from "@/components/Snowfall";
 
 interface DeviceBindingRecord {
@@ -122,6 +126,17 @@ export default function AdminDashboardPage() {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Passkey / WebAuthn Biometric state (Apple Touch ID / Face ID)
+  const [hasPasskeys, setHasPasskeys] = useState(false);
+  const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+  const [showPasskeyModal, setShowPasskeyModal] = useState(false);
+  const [registeredPasskeys, setRegisteredPasskeys] = useState<
+    Array<{ id: string; label: string; createdAt: string; deviceType?: string }>
+  >([]);
+  const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+  const [resetParticipantTarget, setResetParticipantTarget] = useState<AdminParticipant | null>(null);
+  const [isResettingParticipant, setIsResettingParticipant] = useState(false);
+
   // Authenticate Admin
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -183,6 +198,172 @@ export default function AdminDashboardPage() {
       fetchAdminData();
     }
   }, [isAuthenticated, fetchAdminData]);
+
+  // Check existing session & passkeys on mount
+  useEffect(() => {
+    fetch("/api/admin/status", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success && data.data) {
+          setIsAuthenticated(true);
+          setState(data.data);
+        }
+      })
+      .catch(() => {});
+
+    fetch("/api/admin/passkey/list", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success) {
+          setHasPasskeys(Boolean(data.hasPasskeys));
+          if (data.passkeys) setRegisteredPasskeys(data.passkeys);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Biometric Passkey Login (Apple Touch ID / Face ID)
+  const handlePasskeyLogin = async () => {
+    setIsPasskeyLoading(true);
+    setAuthError(null);
+    try {
+      const res = await fetch("/api/admin/passkey/auth-options", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setAuthError(data.error || "Failed to start Touch ID authentication.");
+        setIsPasskeyLoading(false);
+        return;
+      }
+
+      const assertion = await startAuthentication({ optionsJSON: data.options });
+
+      const verifyRes = await fetch("/api/admin/passkey/auth-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: assertion }),
+      });
+
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok || !verifyData.success) {
+        setAuthError(verifyData.error || "Touch ID verification failed.");
+        setIsPasskeyLoading(false);
+        return;
+      }
+
+      setIsAuthenticated(true);
+      fetchAdminData();
+    } catch (err: unknown) {
+      console.error("Passkey login error:", err);
+      const msg = err instanceof Error ? err.message : "Touch ID canceled.";
+      if (!msg.toLowerCase().includes("abort") && !msg.toLowerCase().includes("cancel")) {
+        setAuthError(msg);
+      }
+    } finally {
+      setIsPasskeyLoading(false);
+    }
+  };
+
+  // Register new Biometric Passkey
+  const handleRegisterPasskey = async (label = "Mac Touch ID") => {
+    setIsPasskeyLoading(true);
+    setAuthError(null);
+    try {
+      const res = await fetch("/api/admin/passkey/register-options", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(password ? { "x-admin-password": password } : {}),
+        },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setAuthError(data.error || "Failed to start passkey registration.");
+        setIsPasskeyLoading(false);
+        return;
+      }
+
+      const reg = await startRegistration({ optionsJSON: data.options });
+
+      const verifyRes = await fetch("/api/admin/passkey/register-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: reg, label }),
+      });
+
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok || !verifyData.success) {
+        setAuthError(verifyData.error || "Registration verification failed.");
+        setIsPasskeyLoading(false);
+        return;
+      }
+
+      setHasPasskeys(true);
+      setIsAuthenticated(true);
+      fetchAdminData();
+      setShowPasskeyModal(false);
+
+      const listRes = await fetch("/api/admin/passkey/list", { cache: "no-store" });
+      const listData = await listRes.json();
+      if (listData && listData.passkeys) setRegisteredPasskeys(listData.passkeys);
+    } catch (err: unknown) {
+      console.error("Passkey register error:", err);
+      const msg = err instanceof Error ? err.message : "Passkey registration canceled.";
+      if (!msg.toLowerCase().includes("abort") && !msg.toLowerCase().includes("cancel")) {
+        setAuthError(msg);
+      }
+    } finally {
+      setIsPasskeyLoading(false);
+    }
+  };
+
+  // Delete Passkey
+  const handleDeletePasskey = async (id: string) => {
+    try {
+      const res = await fetch("/api/admin/passkey/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(password ? { "x-admin-password": password } : {}),
+        },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRegisteredPasskeys((prev) => prev.filter((p) => p.id !== id));
+        if (registeredPasskeys.length <= 1) setHasPasskeys(false);
+      }
+    } catch {
+      // non-blocking
+    }
+  };
+
+  // Individual Participant Reset
+  const handleResetSingleParticipant = async () => {
+    if (!resetParticipantTarget) return;
+    setIsResettingParticipant(true);
+    try {
+      const res = await fetch("/api/admin/reset-participant", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(password ? { "x-admin-password": password } : {}),
+        },
+        body: JSON.stringify({ participantId: resetParticipantTarget.id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionSuccessMsg(data.message || `Participant ${resetParticipantTarget.name} has been reset.`);
+        setResetParticipantTarget(null);
+        fetchAdminData();
+      } else {
+        setActionErrorMsg(data.error || "Failed to reset participant.");
+      }
+    } catch {
+      setActionErrorMsg("Network error resetting participant.");
+    } finally {
+      setIsResettingParticipant(false);
+    }
+  };
 
   // Admin Logout
   const handleAdminLogout = async () => {
@@ -356,8 +537,16 @@ export default function AdminDashboardPage() {
                   }}
                   className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#071d13] px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#0f3422] cursor-pointer"
                 >
+                  <Fingerprint className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Passkeys ({registeredPasskeys.length})</span>
+                </button>
+                <button
+                  onClick={() => setShowPasswordModal(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-950/60 px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-amber-900/80 cursor-pointer"
+                  title="Change Organizer Master Password"
+                >
                   <Lock className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Change Password</span>
+                  <span>Password</span>
                 </button>
                 <button
                   onClick={fetchAdminData}
@@ -382,69 +571,113 @@ export default function AdminDashboardPage() {
 
       <main className="relative z-20 mx-auto max-w-6xl px-4 py-8">
         {/* ===================================================================
-            LOGIN SCREEN (With Apple Keychain & Touch ID autofill support)
+            LOGIN SCREEN (With Apple Touch ID & Passkey Biometric Support)
            =================================================================== */}
         {!isAuthenticated && (
-          <div className="mx-auto max-w-md py-12">
-            <div className="rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#0a2618] to-[#05160d] p-8 shadow-2xl backdrop-blur-xl">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/40 bg-red-900/60 shadow-lg">
-                <Lock className="h-7 w-7 text-amber-300" />
+          <div className="mx-auto max-w-md py-8">
+            <div className="rounded-3xl border border-amber-500/40 bg-gradient-to-b from-[#0a2618] to-[#05160d] p-8 shadow-2xl backdrop-blur-xl">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/50 bg-gradient-to-br from-emerald-600/30 to-amber-500/20 shadow-xl">
+                <Fingerprint className="h-9 w-9 text-amber-300 animate-pulse" />
               </div>
 
               <h2 className="text-center font-serif text-2xl font-bold text-white">
-                Organizer Authentication
+                لوحة تحكم المنظّم
               </h2>
               <p className="mt-2 text-center text-xs text-emerald-200/80">
-                Please enter the organizer master password to access the Control Center.
+                تسجيل الدخول الآمن ببصمة الإصبع عبر Apple Touch ID / Passkey
               </p>
 
-              <form method="POST" onSubmit={handleLogin} autoComplete="on" className="mt-6 space-y-4">
-                <input
-                  type="text"
-                  name="username"
-                  id="admin-username"
-                  autoComplete="username"
-                  defaultValue="Organizer"
-                  readOnly
-                  className="sr-only"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                />
-                <div>
-                  <label htmlFor="admin-password" className="block text-xs font-medium text-amber-200 mb-1">
-                    Organizer Master Password:
-                  </label>
-                  <input
-                    id="admin-password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setAuthError(null);
-                    }}
-                    placeholder="Enter organizer password..."
-                    autoFocus
-                    required
-                    className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-3 text-sm text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
-                  />
+              {authError && (
+                <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/70 p-3 text-xs text-red-200">
+                  {authError}
                 </div>
+              )}
 
-                {authError && (
-                  <div className="rounded-xl border border-red-500/40 bg-red-950/70 p-3 text-xs text-red-200">
-                    {authError}
-                  </div>
+              {/* Primary Biometric Passkey Action */}
+              <div className="mt-6 space-y-3">
+                {hasPasskeys ? (
+                  <button
+                    onClick={handlePasskeyLogin}
+                    disabled={isPasskeyLoading}
+                    className="flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 py-4 text-sm font-bold text-white shadow-xl transition-all hover:scale-[1.02] hover:brightness-110 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Fingerprint className="h-6 w-6 text-amber-300" />
+                    <span>{isPasskeyLoading ? "جاري التحقق من البصمة..." : "الدخول عبر بصمة الإصبع (Touch ID)"}</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleRegisterPasskey("Mac Touch ID")}
+                    disabled={isPasskeyLoading}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/80 bg-gradient-to-r from-emerald-600 to-emerald-800 py-3.5 text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 cursor-pointer"
+                  >
+                    <Fingerprint className="h-5 w-5 text-amber-300" />
+                    <span>{isPasskeyLoading ? "جاري تفعيل البصمة..." : "تفعيل وتسجيل بصمة Mac Touch ID الآن"}</span>
+                  </button>
                 )}
 
+                {hasPasskeys && (
+                  <button
+                    onClick={() => handleRegisterPasskey("Mac Touch ID")}
+                    disabled={isPasskeyLoading}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-950/70 py-2.5 text-xs font-medium text-emerald-300 transition-colors cursor-pointer"
+                  >
+                    <Fingerprint className="h-3.5 w-3.5 text-amber-300/80" />
+                    <span>+ تسجيل جهاز جديد / بصمة إضافية</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Collapsible Password Fallback */}
+              <div className="mt-6 border-t border-emerald-900/80 pt-4">
                 <button
-                  type="submit"
-                  disabled={isLoading || !password}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-400/40 bg-gradient-to-r from-red-700 via-red-600 to-red-800 py-3.5 text-sm font-bold text-white shadow-lg transition-all hover:brightness-110 disabled:opacity-50 cursor-pointer"
+                  type="button"
+                  onClick={() => setShowPasswordFallback((prev) => !prev)}
+                  className="mx-auto flex items-center gap-1.5 text-xs text-amber-200/70 hover:text-amber-200 transition-colors cursor-pointer"
                 >
-                  {isLoading ? <span>Verifying...</span> : <span>Unlock Organizer Portal</span>}
+                  <KeyRound className="h-3.5 w-3.5" />
+                  <span>{showPasswordFallback ? "إخفاء خيار كلمة المرور" : "أو الدخول بكلمة المرور اليدوية (Password Fallback)"}</span>
                 </button>
-              </form>
+
+                {showPasswordFallback && (
+                  <form method="POST" onSubmit={handleLogin} autoComplete="on" className="mt-4 space-y-3">
+                    <input
+                      type="text"
+                      name="username"
+                      id="admin-username"
+                      autoComplete="username"
+                      defaultValue="Organizer"
+                      readOnly
+                      className="sr-only"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <input
+                        id="admin-password"
+                        name="password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          setAuthError(null);
+                        }}
+                        placeholder="أدخل كلمة مرور المنظّم..."
+                        required
+                        className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-2.5 text-xs text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading || !password}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-gradient-to-r from-red-800 to-red-900 py-2.5 text-xs font-bold text-white shadow transition-all hover:brightness-110 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isLoading ? <span>Verifying...</span> : <span>الدخول بكلمة المرور</span>}
+                    </button>
+                  </form>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1024,6 +1257,7 @@ export default function AdminDashboardPage() {
                       <th className="py-3 px-3 font-semibold uppercase">PIN Registration</th>
                       <th className="py-3 px-3 font-semibold uppercase">Gift Reveal</th>
                       <th className="py-3 px-3 font-semibold uppercase">Reveal Timestamp</th>
+                      <th className="py-3 px-3 font-semibold uppercase text-right">Reset Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-950/60">
@@ -1077,6 +1311,20 @@ export default function AdminDashboardPage() {
                           </td>
                           <td className="py-3.5 px-3 text-emerald-300/70 font-mono text-[11px]">
                             {p.revealedAt ? new Date(p.revealedAt).toLocaleString() : "—"}
+                          </td>
+                          <td className="py-3.5 px-3 text-right">
+                            {(p.isRegistered || p.isRevealed || p.deviceSummary) ? (
+                              <button
+                                onClick={() => setResetParticipantTarget(p)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-red-500/40 bg-red-950/50 hover:bg-red-900/80 px-2.5 py-1 text-[11px] font-medium text-red-200 transition-colors cursor-pointer"
+                                title={`Reset ${p.name} only`}
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                <span>Reset User</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-emerald-300/30 font-mono">— Clean</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -1422,6 +1670,152 @@ export default function AdminDashboardPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================
+            PASSKEY MANAGEMENT MODAL (Touch ID / Face ID)
+           =================================================================== */}
+        {showPasskeyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
+              onClick={() => setShowPasskeyModal(false)}
+            />
+            <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-emerald-500/40 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-emerald-500/20">
+                <div className="flex items-center gap-2 text-emerald-300">
+                  <Fingerprint className="h-5 w-5 text-amber-300" />
+                  <h3 className="font-serif text-lg font-bold text-white">إدارة البصمات (Passkeys)</h3>
+                </div>
+                <button
+                  onClick={() => setShowPasskeyModal(false)}
+                  className="rounded-lg p-1 text-emerald-300 hover:text-white transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <p className="text-xs text-emerald-200/80">
+                  الأجهزة المصرّح لها بالدخول إلى لوحة التحكم عبر بصمة الإصبع (Apple Touch ID / Face ID). يمكنك تسجيل بصمة جديدة لأي جهاز أو حذف بصمة قديمة.
+                </p>
+
+                {registeredPasskeys.length === 0 ? (
+                  <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4 text-center">
+                    <p className="text-xs text-amber-200">لا توجد بصمات مسجلة حالياً على هذا الخادم.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-emerald-950/80 rounded-2xl border border-emerald-500/20 bg-[#061910] overflow-hidden">
+                    {registeredPasskeys.map((pk) => (
+                      <div key={pk.id} className="p-3.5 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            <Fingerprint className="h-5 w-5 text-amber-300" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-white">{pk.label}</p>
+                            <p className="text-[10px] text-emerald-300/60 font-mono">
+                              أضيفت في: {new Date(pk.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleDeletePasskey(pk.id)}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/30 bg-red-950/40 hover:bg-red-900/60 text-red-300 transition-colors cursor-pointer"
+                          title="حذف هذه البصمة"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="pt-2 flex justify-between gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPasskeyModal(false)}
+                    className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
+                  >
+                    إغلاق
+                  </button>
+
+                  <button
+                    onClick={() => handleRegisterPasskey("Mac Touch ID")}
+                    disabled={isPasskeyLoading}
+                    className="flex items-center gap-2 rounded-xl border border-amber-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+                  >
+                    <Fingerprint className="h-4 w-4 text-amber-300" />
+                    <span>{isPasskeyLoading ? "جاري التسجيل..." : "+ تسجيل بصمة جهاز إضافي"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================
+            INDIVIDUAL PARTICIPANT RESET CONFIRMATION MODAL
+           =================================================================== */}
+        {resetParticipantTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
+              onClick={() => !isResettingParticipant && setResetParticipantTarget(null)}
+            />
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-red-500/40 bg-gradient-to-b from-[#190a0d] to-[#0d0406] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3 pb-3 border-b border-red-500/20 text-red-300">
+                <AlertTriangle className="h-6 w-6 text-red-400 shrink-0" />
+                <h3 className="font-serif text-lg font-bold text-white">إعادة ضبط العضو فقط</h3>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-red-100">
+                  هل أنت متأكد من رغبتك في إعادة ضبط العضو:{" "}
+                  <strong className="text-amber-300 text-sm block mt-1">
+                    {resetParticipantTarget.name}
+                  </strong>
+                </p>
+
+                <div className="rounded-xl border border-amber-500/30 bg-amber-950/40 p-3 text-[11px] text-amber-200/90 space-y-1">
+                  <p>• سيتم مسح رمز الـ PIN وحالة الفتح لهذا العضو فقط.</p>
+                  <p>• سيتم فك قفل الجهاز المرتبط به ليتمكن من الدخول مجدداً.</p>
+                  <p className="font-bold text-emerald-300">• القرعة والهدية المخصصة له تبقى محفوظة 100% دون أي تغيير.</p>
+                </div>
+
+                <div className="pt-3 flex justify-end gap-2.5 border-t border-red-500/20">
+                  <button
+                    type="button"
+                    onClick={() => setResetParticipantTarget(null)}
+                    disabled={isResettingParticipant}
+                    className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetSingleParticipant}
+                    disabled={isResettingParticipant}
+                    className="flex items-center gap-1.5 rounded-xl border border-red-500/50 bg-red-800 hover:bg-red-700 px-5 py-2 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+                  >
+                    {isResettingParticipant ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>جاري إعادة الضبط...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>تأكيد إعادة ضبط هذا العضو</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

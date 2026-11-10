@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   try {
-    const state = await getEventState();
+    const state = await getEventState(true);
 
     const publicParticipants = state.participants.map((p) => ({
       id: p.id,

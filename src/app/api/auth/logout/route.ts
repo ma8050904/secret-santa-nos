@@ -1,32 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { clearSessionCookie, getDeviceIdFromRequest } from "@/lib/session";
-import { clearDeviceBinding } from "@/lib/storage";
+import { NextResponse } from "next/server";
+import { clearSessionCookie } from "@/lib/session";
 
-export async function POST(req: NextRequest) {
-  try {
-    const deviceId = getDeviceIdFromRequest(req);
-    if (deviceId) {
-      await clearDeviceBinding(deviceId);
-    }
-  } catch {
-    // ignore
-  }
-
+/**
+ * Participant session termination.
+ * NOTE: Per strict security policy, device bindings are PERMANENT and CANNOT
+ * be unlinked by participants. Only the organizer can reset device locks.
+ */
+export async function POST() {
   const response = NextResponse.json({
     success: true,
-    message: "Logged out and device unlinked successfully",
+    message: "Session ended. Device remains bound to participant account.",
   });
 
   clearSessionCookie(response);
-
-  // Clear device cookie
-  response.cookies.set("santa_device_v7_clean", "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
 
   return response;
 }

@@ -42,6 +42,17 @@ export interface StoredParticipant {
   encryptedWithPin?: boolean;
 }
 
+export interface AdminPasskey {
+  id: string; // Base64URL credential ID
+  publicKey: string; // Base64URL public key
+  counter: number;
+  transports?: string[];
+  deviceType?: string;
+  backedUp?: boolean;
+  createdAt: string;
+  label: string;
+}
+
 export interface EventState {
   version: number;
   status: "uninitialized" | "ready" | "active" | "closed";
@@ -52,6 +63,7 @@ export interface EventState {
   deviceResetVersion?: number;
   adminPasswordHash?: string;
   adminPasswordSalt?: string;
+  adminPasskeys?: AdminPasskey[];
 }
 
 export interface ParticipantRuntimeState {
@@ -810,7 +822,10 @@ export interface AdminAuditLogEntry {
     | "RESET_ALL_DEVICES"
     | "ADMIN_LOGIN"
     | "ADMIN_LOGIN_FAILED"
-    | "GIFT_REVEALED";
+    | "GIFT_REVEALED"
+    | "REGISTER_PASSKEY"
+    | "DELETE_PASSKEY"
+    | "AUTH_PASSKEY_LOGIN";
   actionLabel: string;
   timestamp: string;
   ip: string;
@@ -1561,11 +1576,17 @@ export async function fullEventReset(
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
   deviceBindingCache.clear();
+  lastMarkersSyncTimestamp = 0;
 
-  // 4. Clear all device bindings from Blob
+  // 4. Clear all device bindings and markers from Blob
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      for (const prefix of ["v7/devices/", "v7/participant_devices/"]) {
+      for (const prefix of [
+        "v7/devices/",
+        "v7/participant_devices/",
+        "v7/revealed/",
+        "v7/registered/",
+      ]) {
         const listRes = await list({
           prefix,
           token: process.env.BLOB_READ_WRITE_TOKEN,
@@ -1578,7 +1599,7 @@ export async function fullEventReset(
         }
       }
     } catch (err) {
-      console.warn("Notice: reset devices in Blob:", err);
+      console.warn("Notice: reset in Blob:", err);
     }
   }
 
@@ -1591,6 +1612,15 @@ export async function fullEventReset(
           fs.unlinkSync(path.join(dir, f));
         }
       }
+    }
+    const localDir = path.dirname(getStorageFilePath());
+    const revealedDir = path.join(localDir, "v7_revealed");
+    const registeredDir = path.join(localDir, "v7_registered");
+    if (fs.existsSync(revealedDir)) {
+      fs.rmSync(revealedDir, { recursive: true, force: true });
+    }
+    if (fs.existsSync(registeredDir)) {
+      fs.rmSync(registeredDir, { recursive: true, force: true });
     }
   } catch {
     // ignore
@@ -1633,6 +1663,125 @@ export async function updateAdminPassword(
   return {
     success: true,
     message: "Organizer password updated successfully.",
+  };
+}
+
+/**
+ * Retrieve all registered WebAuthn / Passkey credentials for Admin.
+ */
+export async function getAdminPasskeys(): Promise<AdminPasskey[]> {
+  const state = await getEventState(true);
+  return state.adminPasskeys || [];
+}
+
+/**
+ * Register or update an Admin Passkey.
+ */
+export async function saveAdminPasskey(passkey: AdminPasskey): Promise<void> {
+  const state = await getEventState(true);
+  if (!state.adminPasskeys) {
+    state.adminPasskeys = [];
+  }
+  const existingIdx = state.adminPasskeys.findIndex((pk) => pk.id === passkey.id);
+  if (existingIdx >= 0) {
+    state.adminPasskeys[existingIdx] = passkey;
+  } else {
+    state.adminPasskeys.push(passkey);
+  }
+  await saveEventState(state);
+}
+
+/**
+ * Update the counter for an Admin Passkey to prevent replay attacks.
+ */
+export async function updateAdminPasskeyCounter(id: string, counter: number): Promise<void> {
+  const state = await getEventState(true);
+  if (!state.adminPasskeys) return;
+  const passkey = state.adminPasskeys.find((pk) => pk.id === id);
+  if (passkey) {
+    passkey.counter = counter;
+    await saveEventState(state);
+  }
+}
+
+/**
+ * Remove a registered Admin Passkey by its credential ID.
+ */
+export async function removeAdminPasskey(id: string): Promise<boolean> {
+  const state = await getEventState(true);
+  if (!state.adminPasskeys) return false;
+  const initialLen = state.adminPasskeys.length;
+  state.adminPasskeys = state.adminPasskeys.filter((pk) => pk.id !== id);
+  if (state.adminPasskeys.length !== initialLen) {
+    await saveEventState(state);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Resets a single participant's registration, PIN, and reveal status,
+ * and clears their device binding so they can start fresh without wiping others.
+ */
+export async function resetSingleParticipant(
+  participantId: string,
+  clientIp: string = "unknown"
+): Promise<{ success: boolean; message: string }> {
+  const state = await getEventState(true);
+  const participant = state.participants.find((p) => p.id === participantId);
+  if (!participant) {
+    throw new Error("Participant not found.");
+  }
+
+  participant.pinHash = null;
+  participant.pinSalt = null;
+  participant.encryptedWithPin = false;
+  participant.isRevealed = false;
+  participant.revealedAt = null;
+
+  runtimeParticipantCache.delete(participantId);
+  revealedParticipantIds.delete(participantId);
+  registeredParticipantIds.delete(participantId);
+  lastMarkersSyncTimestamp = 0;
+
+  // Clear Blob markers
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const markers = [
+        `v7/revealed/${participantId}`,
+        `v7/registered/${participantId}`,
+      ];
+      for (const m of markers) {
+        try {
+          const listRes = await list({ prefix: m, token: process.env.BLOB_READ_WRITE_TOKEN });
+          if (listRes.blobs.length > 0) {
+            await del(listRes.blobs.map((b) => b.url), { token: process.env.BLOB_READ_WRITE_TOKEN });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Clear device binding for this participant
+  await clearDeviceBindingsForParticipant(participantId);
+
+  await saveEventState(state);
+
+  await recordAdminAuditLog({
+    action: "RESET_ALL_DEVICES",
+    actionLabel: "Reset Participant",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `Participant ${participant.name} (${participant.id}) was individually reset (PIN, reveal, and device binding cleared).`,
+  });
+
+  return {
+    success: true,
+    message: `Participant ${participant.name} has been completely reset.`,
   };
 }
 

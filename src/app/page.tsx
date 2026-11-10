@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, Suspense, useCallback, useRef } from "react";
-import { ArrowDown, Gift, RefreshCw, Lock, ShieldAlert, X, LogOut, CheckCircle2 } from "lucide-react";
+import { ArrowDown, Gift, RefreshCw, Lock, ShieldAlert, X, CheckCircle2 } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
@@ -175,6 +175,7 @@ function SecretSantaApp() {
         setActiveParticipant(data.participant);
         setBoundDeviceUser({ id: data.participant.id, name: data.participant.name });
         setStoredBoundParticipant({ id: data.participant.id, name: data.participant.name });
+        setIsCurrentlyRevealed(Boolean(data.participant.isRevealed));
       } else {
         setActiveParticipant(null);
         setActivePin(null);
@@ -204,10 +205,12 @@ function SecretSantaApp() {
         };
         setBoundDeviceUser(boundParticipant);
         setStoredBoundParticipant(boundParticipant);
+        lockedUserRef.current = boundParticipant;
       } else if (res.ok && !data.bound) {
-        // Device explicitly unbound by admin
+        // Device explicitly unbound by admin on server
         setBoundDeviceUser(null);
         setStoredBoundParticipant(null);
+        lockedUserRef.current = null;
       }
     } catch {
       // Non-blocking
@@ -226,41 +229,6 @@ function SecretSantaApp() {
       el.scrollIntoView({ behavior: "smooth" });
     }
   };
-
-  // Unlink device & log out
-  const handleLogoutAndUnbind = useCallback(async () => {
-    try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: getDeviceHeaders(),
-      });
-    } catch {
-      // non-blocking
-    }
-
-    clearStoredBoundParticipant();
-    try {
-      window.localStorage.removeItem("santa_device_v7_clean_id");
-    } catch {
-      // ignore
-    }
-
-    setActiveParticipant(null);
-    setBoundDeviceUser(null);
-    lockedUserRef.current = null;
-    setActivePin(null);
-    setIsCurrentlyRevealed(false);
-    setRevealedRecipient(undefined);
-    setSelectedForAuth(null);
-
-    showToast({
-      title: "تم تسجيل الخروج",
-      message: "تم فك ربط هذا الجهاز بنجاح. يمكنك الآن الدخول بأي حساب تريده.",
-      type: "info",
-    });
-
-    loadParticipants(true);
-  }, [loadParticipants, showToast]);
 
   // Participant card clicked (Session-Locked & Device-Locked immediately on click)
   const handleSelectParticipant = useCallback(
@@ -433,19 +401,10 @@ function SecretSantaApp() {
                         setSelectedForAuth(target);
                       }
                     }}
-                    className="flex items-center gap-1.5 rounded-xl border border-amber-400/60 bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-1.5 text-xs font-bold shadow transition-transform hover:scale-105 cursor-pointer"
+                    className="flex items-center gap-2 rounded-xl border border-amber-400/80 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 px-4 py-2 text-xs font-bold shadow-lg transition-transform hover:scale-105 cursor-pointer"
                   >
-                    <Gift className="h-3.5 w-3.5" />
-                    <span>افتح هديتك</span>
-                  </button>
-
-                  <button
-                    onClick={handleLogoutAndUnbind}
-                    className="flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-red-950/70 hover:bg-red-900/90 text-red-200 px-3 py-1.5 text-xs font-semibold shadow transition-colors cursor-pointer"
-                    title="فك ربط الجهاز وتسجيل الخروج"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span>تسجيل خروج وفك الربط</span>
+                    <Gift className="h-4 w-4" />
+                    <span>افتح هديتك الآن</span>
                   </button>
                 </div>
               </div>
