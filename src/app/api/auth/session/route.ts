@@ -16,8 +16,9 @@ export async function GET(req: NextRequest) {
     const state = await getEventState(true);
     const participant = state.participants.find((p) => p.id === session.participantId);
 
-    // If participant has no registered PIN, the session is invalidated
-    if (!participant || !participant.pinHash) {
+    // If participant has no registered credential (PIN or Passkey), the session is invalidated
+    const hasCredential = Boolean(participant?.pinHash || participant?.passkeyCredentialId);
+    if (!participant || !hasCredential) {
       const res = NextResponse.json({ authenticated: false });
       clearSessionCookie(res);
       return res;
@@ -33,6 +34,20 @@ export async function GET(req: NextRequest) {
       return res;
     }
 
+    let recipientName: string | undefined;
+    if (participant.isRevealed && participant.encryptedRecipient) {
+      try {
+        const { decryptRecipient } = await import("@/lib/crypto");
+        recipientName = decryptRecipient(
+          participant.encryptedRecipient,
+          participant.code,
+          state.masterSalt
+        );
+      } catch {
+        // ignore
+      }
+    }
+
     return NextResponse.json({
       authenticated: true,
       participant: {
@@ -40,6 +55,7 @@ export async function GET(req: NextRequest) {
         name: participant.name,
         isRevealed: Boolean(participant.isRevealed),
       },
+      recipientName,
     });
   } catch {
     const res = NextResponse.json({ authenticated: false });

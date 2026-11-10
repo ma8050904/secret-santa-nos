@@ -176,6 +176,9 @@ function SecretSantaApp() {
         setBoundDeviceUser({ id: data.participant.id, name: data.participant.name });
         setStoredBoundParticipant({ id: data.participant.id, name: data.participant.name });
         setIsCurrentlyRevealed(Boolean(data.participant.isRevealed));
+        if (data.recipientName) {
+          setRevealedRecipient(data.recipientName);
+        }
       } else {
         setActiveParticipant(null);
         setActivePin(null);

@@ -290,6 +290,21 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
             </div>
           </div>
         )}
+
+        {stage === "revealed" && !recipientName && (
+          <div className="text-center py-8">
+            <p className="text-sm text-amber-200">Retrieving your secret assignment...</p>
+            <button
+              onClick={() => {
+                setStage("ready_to_open");
+                handleOpenGift();
+              }}
+              className="mt-4 rounded-2xl border border-amber-400 bg-gradient-to-r from-emerald-700 to-teal-800 px-6 py-2.5 text-xs font-bold text-white hover:brightness-110 cursor-pointer"
+            >
+              Tap to Retry
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

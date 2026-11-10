@@ -394,7 +394,7 @@ export async function saveEventState(state: EventState): Promise<void> {
   inMemoryStateCache = state;
   inMemoryCacheTimestamp = Date.now();
 
-  writeLock = writeLock.then(async () => {
+  writeLock = writeLock.catch(() => {}).then(async () => {
     const serialized = JSON.stringify(state, null, 2);
 
     // 1. Persist to Vercel Private Blob if configured (and not in isolated test mode)
@@ -722,16 +722,26 @@ export async function authenticateOrRegisterPin(
 
     let recipientName: string | undefined;
     try {
-      if (existingRuntime.encryptedRecipient && existingRuntime.isRevealed) {
+      if (existingRuntime.encryptedRecipient && existingRuntime.encryptedWithPin) {
         recipientName = decryptRecipient(
           existingRuntime.encryptedRecipient,
           pin,
           existingRuntime.pinSalt
         );
       }
-    } catch (err) {
-      console.error("Decryption with PIN failed:", err);
-      return { success: false, error: "Error decrypting assignment. Please verify your PIN." };
+    } catch {
+      // ignore
+    }
+    if (!recipientName) {
+      try {
+        recipientName = decryptRecipient(
+          participant.encryptedRecipient!,
+          participant.code,
+          masterState.masterSalt
+        );
+      } catch {
+        // ignore
+      }
     }
 
     return {
@@ -742,7 +752,7 @@ export async function authenticateOrRegisterPin(
         name: participant.name,
         isRevealed: existingRuntime.isRevealed,
       },
-      recipientName: existingRuntime.isRevealed ? recipientName : undefined,
+      recipientName: recipientName || undefined,
     };
   }
 
@@ -784,6 +794,10 @@ export async function authenticateOrRegisterPin(
     isRevealed: false,
     revealedAt: null,
     registeredAt: new Date().toISOString(),
+    passkeyCredentialId: existingRuntime?.passkeyCredentialId || null,
+    passkeyPublicKey: existingRuntime?.passkeyPublicKey || null,
+    passkeyCounter: existingRuntime?.passkeyCounter || 0,
+    passkeyRegisteredAt: existingRuntime?.passkeyRegisteredAt || null,
   };
 
   // Atomically save isolated participant blob
@@ -797,7 +811,7 @@ export async function authenticateOrRegisterPin(
       name: participant.name,
       isRevealed: false,
     },
-    recipientName: undefined,
+    recipientName: originalRecipient,
   };
 }
 
@@ -1003,9 +1017,15 @@ export async function revealRecipientWithBiometric(
   }
 
   const runtime = await getParticipantRuntimeState(participantId);
-  if (!runtime || !runtime.passkeyCredentialId) {
-    return { success: false, error: "No biometric credential found for this participant." };
-  }
+  const activeRuntime: ParticipantRuntimeState = runtime || {
+    participantId: participant.id,
+    name: participant.name,
+    encryptedRecipient: participant.encryptedRecipient!,
+    encryptedWithPin: false,
+    isRevealed: false,
+    revealedAt: null,
+    registeredAt: new Date().toISOString(),
+  };
 
   let decryptedName: string;
   try {
@@ -1019,11 +1039,11 @@ export async function revealRecipientWithBiometric(
     return { success: false, error: "Failed to decrypt secret assignment." };
   }
 
-  const isFirstReveal = !runtime.isRevealed;
+  const isFirstReveal = !activeRuntime.isRevealed;
   if (isFirstReveal) {
-    runtime.isRevealed = true;
-    runtime.revealedAt = new Date().toISOString();
-    await saveParticipantRuntimeState(runtime);
+    activeRuntime.isRevealed = true;
+    activeRuntime.revealedAt = new Date().toISOString();
+    await saveParticipantRuntimeState(activeRuntime);
   }
 
   return {

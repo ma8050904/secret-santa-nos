@@ -1,8 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowRight, KeyRound, Eye, EyeOff, Fingerprint } from "lucide-react";
-import { startRegistration, startAuthentication, platformAuthenticatorIsAvailable } from "@simplewebauthn/browser";
+import { ArrowRight, KeyRound, Eye, EyeOff, Fingerprint, ShieldAlert } from "lucide-react";
+import {
+  startRegistration,
+  startAuthentication,
+  platformAuthenticatorIsAvailable,
+  WebAuthnAbortService,
+} from "@simplewebauthn/browser";
 import { ParticipantItem } from "./ParticipantGrid";
 import { getDeviceHeaders, setStoredBoundParticipant } from "@/lib/device";
 
@@ -29,19 +34,43 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lockoutSec, setLockoutSec] = useState<number | null>(null);
 
-  // Biometric / Device Screen Lock states
+  // Active authentication mode tab
+  const [activeTab, setActiveTab] = useState<"biometric" | "pin">(() => {
+    return typeof window !== "undefined" && Boolean(window.PublicKeyCredential)
+      ? "biometric"
+      : "pin";
+  });
+
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
-  const [isBiometricLoading, setIsBiometricLoading] = useState(() => {
-    return typeof window !== "undefined" && Boolean(window.PublicKeyCredential);
-  });
-  const [showPinFallback, setShowPinFallback] = useState(() => {
-    return typeof window !== "undefined" && !Boolean(window.PublicKeyCredential);
-  });
+  const [isBiometricLoading, setIsBiometricLoading] = useState(false);
   const autoTriggeredRef = useRef(false);
+
+  // Safely abort any active WebAuthn session
+  const cancelActiveWebAuthn = useCallback(() => {
+    try {
+      WebAuthnAbortService.cancelCeremony();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelActiveWebAuthn();
+    };
+  }, [cancelActiveWebAuthn]);
+
+  // Handle closing modal
+  const handleClose = () => {
+    cancelActiveWebAuthn();
+    onClose();
+  };
 
   // Helper for biometric registration
   const handleBiometricRegister = useCallback(async () => {
     try {
+      cancelActiveWebAuthn();
       const optRes = await fetch("/api/auth/biometric/register-options", {
         method: "POST",
         headers: {
@@ -53,8 +82,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
       const optData = await optRes.json();
       if (!optRes.ok || !optData.success) {
-        setShowPinFallback(true);
         setIsBiometricLoading(false);
+        setActiveTab("pin");
         return;
       }
 
@@ -75,8 +104,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       const verifyData = await verifyRes.json();
       if (!verifyRes.ok || !verifyData.success) {
         setError(verifyData.error || "Biometric registration failed.");
-        setShowPinFallback(true);
         setIsBiometricLoading(false);
+        setActiveTab("pin");
         return;
       }
 
@@ -90,13 +119,15 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       });
     } catch (err: unknown) {
       console.log("Biometric auto-prompt fallback:", err);
-      setShowPinFallback(true);
+      cancelActiveWebAuthn();
       setIsBiometricLoading(false);
+      setActiveTab("pin");
     }
-  }, [participant, onSuccess]);
+  }, [participant, onSuccess, cancelActiveWebAuthn]);
 
   // Biometric Authentication (Face ID / Touch ID / Native Device Passcode)
   const handleBiometricAuth = useCallback(async () => {
+    cancelActiveWebAuthn();
     setError(null);
     setIsBiometricLoading(true);
 
@@ -117,8 +148,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           if (optData && optData.noPasskey) {
             return handleBiometricRegister();
           }
-          setShowPinFallback(true);
           setIsBiometricLoading(false);
+          setActiveTab("pin");
           return;
         }
 
@@ -139,8 +170,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         const verifyData = await verifyRes.json();
         if (!verifyRes.ok || !verifyData.success) {
           setError(verifyData.error || "Biometric authentication failed.");
-          setShowPinFallback(true);
           setIsBiometricLoading(false);
+          setActiveTab("pin");
           return;
         }
 
@@ -158,11 +189,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       }
     } catch (err: unknown) {
       console.log("Biometric auto-prompt fallback:", err);
-      // Automatically fallback to PIN interface if canceled or no lock found
-      setShowPinFallback(true);
+      cancelActiveWebAuthn();
       setIsBiometricLoading(false);
+      setActiveTab("pin");
     }
-  }, [participant, onSuccess, handleBiometricRegister]);
+  }, [participant, onSuccess, handleBiometricRegister, cancelActiveWebAuthn]);
 
   // Auto-detect biometric availability and immediately fire Face ID / Touch ID / Passcode prompt
   useEffect(() => {
@@ -174,7 +205,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         if (!supported) {
           // No device lock / platform authenticator found -> auto-switch to PIN entry
           setIsBiometricLoading(false);
-          setShowPinFallback(true);
+          setActiveTab("pin");
         } else if (!autoTriggeredRef.current) {
           autoTriggeredRef.current = true;
           // Supported -> automatically pop up Face ID / Touch ID / Passcode
@@ -185,7 +216,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         if (!isMounted) return;
         setIsBiometricSupported(false);
         setIsBiometricLoading(false);
-        setShowPinFallback(true);
+        setActiveTab("pin");
       });
 
     return () => {
@@ -207,6 +238,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       return;
     }
 
+    cancelActiveWebAuthn();
     setError(null);
     setIsSubmitting(true);
 
@@ -268,7 +300,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       <div className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#0a2618] via-[#071d13] to-[#04120b] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.85)]">
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border border-amber-500/25 bg-[#0f3422]/60 text-amber-300 transition-colors hover:border-amber-400 hover:bg-red-950/80 hover:text-white cursor-pointer"
           aria-label="Close"
         >
@@ -276,9 +308,49 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         </button>
 
         <div className="text-center pt-2">
-          {/* Active Biometric Scanning State */}
-          {isBiometricLoading && !showPinFallback ? (
-            <div className="py-4">
+          {/* Method Switcher Tabs (Visible when biometrics is supported) */}
+          {isBiometricSupported && (
+            <div className="flex rounded-2xl bg-[#06180e] p-1 border border-amber-500/25 mb-5 shadow-inner">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setActiveTab("biometric");
+                  handleBiometricAuth();
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "biometric"
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md border border-emerald-400/40"
+                    : "text-emerald-300/70 hover:text-white"
+                }`}
+              >
+                <Fingerprint className="h-4 w-4 text-amber-300" />
+                <span>Face ID</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  cancelActiveWebAuthn();
+                  setIsBiometricLoading(false);
+                  setError(null);
+                  setActiveTab("pin");
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "pin"
+                    ? "bg-gradient-to-r from-red-800 to-red-700 text-white shadow-md border border-amber-400/40"
+                    : "text-emerald-300/70 hover:text-white"
+                }`}
+              >
+                <KeyRound className="h-4 w-4 text-amber-300" />
+                <span>4-Digit PIN</span>
+              </button>
+            </div>
+          )}
+
+          {/* TAB 1: Biometric Scanning View */}
+          {activeTab === "biometric" && (
+            <div className="py-2">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/50 bg-gradient-to-br from-emerald-600/30 to-amber-500/20 shadow-xl">
                 <Fingerprint className="h-9 w-9 text-amber-300 animate-pulse" />
               </div>
@@ -286,23 +358,47 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
                 {participant.name}
               </h3>
               <p className="mt-2 text-xs text-emerald-200/80">
-                Verifying with Face ID, Touch ID, or Passcode...
+                {isBiometricLoading
+                  ? "Verifying Face ID / Touch ID / Passcode..."
+                  : "Tap below to scan Face ID or Passcode"}
               </p>
-              <div className="mt-6">
+
+              {/* Error Message if any */}
+              {error && (
+                <div className="mt-3 rounded-xl border border-red-500/40 bg-red-950/80 p-2.5 text-center text-xs text-red-200">
+                  {error}
+                </div>
+              )}
+
+              <div className="mt-6 space-y-3">
+                <button
+                  type="button"
+                  onClick={handleBiometricAuth}
+                  disabled={isBiometricLoading}
+                  className="group flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/50 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-700 py-3 text-sm font-bold tracking-wide text-white shadow-[0_4px_20px_rgba(16,185,129,0.4)] transition-all hover:brightness-110 cursor-pointer disabled:opacity-50"
+                >
+                  <Fingerprint className="h-4 w-4 text-amber-300" />
+                  <span>{isBiometricLoading ? "Waiting for device..." : "Scan Face ID / Passcode"}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
+                    cancelActiveWebAuthn();
                     setIsBiometricLoading(false);
-                    setShowPinFallback(true);
+                    setError(null);
+                    setActiveTab("pin");
                   }}
                   className="text-xs text-amber-200/70 hover:text-amber-200 underline cursor-pointer"
                 >
-                  Enter 4-digit PIN instead
+                  Or enter 4-digit PIN instead
                 </button>
               </div>
             </div>
-          ) : (
-            /* PIN Fallback State (Automatic if no lock or biometric canceled) */
+          )}
+
+          {/* TAB 2: 4-Digit PIN Form */}
+          {activeTab === "pin" && (
             <>
               {/* Header Icon */}
               <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/40 bg-gradient-to-br from-red-800 to-emerald-950 shadow-lg">
@@ -318,12 +414,13 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
               {/* Error Message */}
               {error && (
-                <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/80 p-2.5 text-center text-xs text-red-200">
-                  {error}
+                <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/80 p-2.5 text-center text-xs text-red-200 flex items-center justify-center gap-1.5">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-red-400" />
+                  <span>{error}</span>
                   {lockoutSec && (
-                    <p className="mt-1 font-semibold text-amber-300">
-                      Retry in {lockoutSec}s
-                    </p>
+                    <span className="font-semibold text-amber-300">
+                      ({lockoutSec}s)
+                    </span>
                   )}
                 </div>
               )}
@@ -369,16 +466,20 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
                 </button>
               </form>
 
-              {/* Optional Retry Button for Biometrics */}
+              {/* Switch back to Face ID button if supported */}
               {isBiometricSupported && (
                 <div className="mt-4 pt-3 border-t border-emerald-900/60 text-center">
                   <button
                     type="button"
-                    onClick={handleBiometricAuth}
+                    onClick={() => {
+                      setError(null);
+                      setActiveTab("biometric");
+                      handleBiometricAuth();
+                    }}
                     className="inline-flex items-center gap-1.5 text-xs text-emerald-300 hover:text-white transition-colors cursor-pointer"
                   >
                     <Fingerprint className="h-3.5 w-3.5 text-amber-300" />
-                    <span>Try Face ID / Passcode again</span>
+                    <span>Switch to Face ID / Passcode</span>
                   </button>
                 </div>
               )}
