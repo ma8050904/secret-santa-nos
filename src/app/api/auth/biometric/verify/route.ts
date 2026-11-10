@@ -122,12 +122,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Background device binding so response is instantaneous
-      bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
+      // Bind device authoritatively before returning
+      await bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
         ip,
         userAgent,
         hardwareFingerprint: hwFp || undefined,
-      }).catch((err) => console.warn("Background device binding notice:", err));
+      });
 
       const response = NextResponse.json({
         success: true,
@@ -194,12 +194,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Background device binding so response is instantaneous
-      bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
+      // Bind device authoritatively before returning
+      await bindDeviceToParticipant(deviceId, participantId, result.participant.name, {
         ip,
         userAgent,
         hardwareFingerprint: hwFp || undefined,
-      }).catch((err) => console.warn("Background device binding notice:", err));
+      });
 
       const response = NextResponse.json({
         success: true,

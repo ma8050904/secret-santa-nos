@@ -146,8 +146,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           setTimeout(() => pinInputRef.current?.focus(), 50);
           return;
         }
-        if (optRes.status === 403 && String(optData.error || "").includes("officially registered")) {
-          setError(optData.error || "This device is registered to another participant.");
+        if (optRes.status === 403) {
+          setError(optData.error || "This physical device is already registered to another participant.");
           setIsDeviceBlocked(true);
           return;
         }

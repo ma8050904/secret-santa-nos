@@ -411,6 +411,108 @@ export async function getPostgresEventState(): Promise<EventState | null> {
 }
 
 /**
+ * Persists an isolated participant's credentials and reveal state into PostgreSQL.
+ */
+export async function savePostgresParticipantState(state: any): Promise<boolean> {
+  const sql = getDbClient();
+  if (!sql) return false;
+  try {
+    await sql`
+      INSERT INTO event_participants (
+        id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
+        pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
+        passkey_public_key, passkey_counter, passkey_registered_at, updated_at
+      )
+      VALUES (
+        ${state.participantId}, ${state.name}, '', '', ${state.encryptedRecipient || null},
+        ${Boolean(state.isRevealed)}, ${state.revealedAt || null},
+        ${state.pinHash || null}, ${state.pinSalt || null}, ${Boolean(state.encryptedWithPin)},
+        ${state.passkeyCredentialId || null}, ${state.passkeyPublicKey || null},
+        ${state.passkeyCounter || 0}, ${state.passkeyRegisteredAt || null}, NOW()
+      )
+      ON CONFLICT (id) DO UPDATE
+      SET
+        encrypted_recipient = EXCLUDED.encrypted_recipient,
+        is_revealed = EXCLUDED.is_revealed,
+        revealed_at = EXCLUDED.revealed_at,
+        pin_hash = EXCLUDED.pin_hash,
+        pin_salt = EXCLUDED.pin_salt,
+        encrypted_with_pin = EXCLUDED.encrypted_with_pin,
+        passkey_credential_id = EXCLUDED.passkey_credential_id,
+        passkey_public_key = EXCLUDED.passkey_public_key,
+        passkey_counter = EXCLUDED.passkey_counter,
+        passkey_registered_at = EXCLUDED.passkey_registered_at,
+        updated_at = NOW();
+    `;
+    return true;
+  } catch (err) {
+    console.error("Database error saving participant state to PostgreSQL:", err);
+    return false;
+  }
+}
+
+/**
+ * Retrieves an isolated participant's credentials and reveal state from PostgreSQL.
+ */
+export async function getPostgresParticipantState(participantId: string): Promise<any | null> {
+  const sql = getDbClient();
+  if (!sql) return null;
+  try {
+    const rows = await sql`
+      SELECT id, name, encrypted_recipient, is_revealed, revealed_at,
+             pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
+             passkey_public_key, passkey_counter, passkey_registered_at
+      FROM event_participants
+      WHERE id = ${participantId}
+      LIMIT 1;
+    `;
+    if (rows && rows.length > 0) {
+      const r = rows[0];
+      return {
+        participantId: r.id,
+        name: r.name,
+        pinHash: r.pin_hash || undefined,
+        pinSalt: r.pin_salt || undefined,
+        encryptedRecipient: r.encrypted_recipient || undefined,
+        encryptedWithPin: Boolean(r.encrypted_with_pin),
+        isRevealed: Boolean(r.is_revealed),
+        revealedAt: r.revealed_at ? String(r.revealed_at) : null,
+        passkeyCredentialId: r.passkey_credential_id || null,
+        passkeyPublicKey: r.passkey_public_key || null,
+        passkeyCounter: Number(r.passkey_counter || 0),
+        passkeyRegisteredAt: r.passkey_registered_at ? String(r.passkey_registered_at) : null,
+      };
+    }
+  } catch (err) {
+    console.error("Database error fetching participant state from PostgreSQL:", err);
+  }
+  return null;
+}
+
+/**
+ * Retrieves all registered passkey credential IDs from PostgreSQL.
+ * Used for hardware exclusion in WebAuthn registration ceremonies.
+ */
+export async function getPostgresAllPasskeyCredentialIds(): Promise<string[]> {
+  const sql = getDbClient();
+  if (!sql) return [];
+  try {
+    const rows = await sql`
+      SELECT passkey_credential_id
+      FROM event_participants
+      WHERE passkey_credential_id IS NOT NULL 
+        AND passkey_credential_id != ''
+        AND passkey_credential_id != 'registered'
+        AND passkey_credential_id != 'passkey_marker_present';
+    `;
+    return rows.map((r: any) => String(r.passkey_credential_id)).filter(Boolean);
+  } catch (err) {
+    console.error("Database error fetching all passkey credential IDs from PostgreSQL:", err);
+    return [];
+  }
+}
+
+/**
  * Persists the authoritative master event state atomically into PostgreSQL.
  */
 export async function savePostgresEventState(state: EventState): Promise<boolean> {
@@ -424,9 +526,110 @@ export async function savePostgresEventState(state: EventState): Promise<boolean
       ON CONFLICT (key) DO UPDATE
       SET value = ${jsonStr}::jsonb, updated_at = NOW();
     `;
+
+    // Also sync all participants into the event_participants table
+    if (state.participants && Array.isArray(state.participants)) {
+      for (const p of state.participants) {
+        await sql`
+          INSERT INTO event_participants (
+            id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
+            pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
+            passkey_public_key, passkey_counter, passkey_registered_at, updated_at
+          )
+          VALUES (
+            ${p.id}, ${p.name}, ${p.code || ''}, ${p.codeHash || ''}, ${p.encryptedRecipient || null},
+            ${Boolean(p.isRevealed)}, ${p.revealedAt ? new Date(p.revealedAt) : null},
+            ${p.pinHash || null}, ${p.pinSalt || null}, ${Boolean(p.encryptedWithPin)},
+            ${p.passkeyCredentialId || null}, ${p.passkeyPublicKey || null},
+            ${p.passkeyCounter || 0}, ${p.passkeyRegisteredAt ? new Date(p.passkeyRegisteredAt) : null}, NOW()
+          )
+          ON CONFLICT (id) DO UPDATE
+          SET
+            name = EXCLUDED.name,
+            encrypted_recipient = EXCLUDED.encrypted_recipient,
+            is_revealed = EXCLUDED.is_revealed,
+            revealed_at = EXCLUDED.revealed_at,
+            pin_hash = COALESCE(event_participants.pin_hash, EXCLUDED.pin_hash),
+            pin_salt = COALESCE(event_participants.pin_salt, EXCLUDED.pin_salt),
+            encrypted_with_pin = COALESCE(event_participants.encrypted_with_pin, EXCLUDED.encrypted_with_pin),
+            passkey_credential_id = COALESCE(event_participants.passkey_credential_id, EXCLUDED.passkey_credential_id),
+            passkey_public_key = COALESCE(event_participants.passkey_public_key, EXCLUDED.passkey_public_key),
+            passkey_counter = GREATEST(event_participants.passkey_counter, EXCLUDED.passkey_counter),
+            passkey_registered_at = COALESCE(event_participants.passkey_registered_at, EXCLUDED.passkey_registered_at),
+            updated_at = NOW();
+        `;
+      }
+    }
+
     return true;
   } catch (err) {
     console.error("Database error saving event state to PostgreSQL:", err);
     return false;
   }
 }
+
+/**
+ * Retrieves lightweight markers (revealed, registered, passkeys) atomically from PostgreSQL.
+ * Completely replaces high-cost Blob list calls and eliminates rate-limit/quota lockouts.
+ */
+export async function getPostgresMarkers(): Promise<{
+  revealed: string[];
+  registered: string[];
+  passkeys: Array<{ participantId: string; credentialId: string }>;
+} | null> {
+  const sql = getDbClient();
+  if (!sql) return null;
+  try {
+    const rows = await sql`
+      SELECT id, is_revealed,
+             (pin_hash IS NOT NULL OR passkey_credential_id IS NOT NULL) AS is_registered,
+             passkey_credential_id
+      FROM event_participants;
+    `;
+    const revealed: string[] = [];
+    const registered: string[] = [];
+    const passkeys: Array<{ participantId: string; credentialId: string }> = [];
+
+    for (const r of rows) {
+      const pid = String(r.id);
+      if (r.is_revealed) revealed.push(pid);
+      if (r.is_registered) registered.push(pid);
+      if (r.passkey_credential_id) {
+        passkeys.push({ participantId: pid, credentialId: String(r.passkey_credential_id) });
+      }
+    }
+    return { revealed, registered, passkeys };
+  } catch (err) {
+    console.error("Database error fetching markers from PostgreSQL:", err);
+    return null;
+  }
+}
+
+/**
+ * Records a participant and device reveal transactionally in PostgreSQL.
+ */
+export async function recordPostgresDeviceReveal(
+  deviceId: string,
+  participantId: string
+): Promise<boolean> {
+  const sql = getDbClient();
+  if (!sql) return false;
+  try {
+    const cleanId = deviceId.trim().toLowerCase();
+    await sql`
+      UPDATE event_participants
+      SET is_revealed = TRUE, revealed_at = NOW()
+      WHERE id = ${participantId};
+    `;
+    await sql`
+      UPDATE device_bindings
+      SET has_revealed = TRUE, revealed_at = NOW()
+      WHERE device_id = ${cleanId} OR participant_id = ${participantId};
+    `;
+    return true;
+  } catch (err) {
+    console.error("Database error recording device reveal in PostgreSQL:", err);
+    return false;
+  }
+}
+

@@ -287,6 +287,33 @@ async function syncMarkers(force = false): Promise<void> {
     return;
   }
 
+  // 0. Primary: PostgreSQL Transactional Store (Zero Vercel Blob operations, unlimited free queries)
+  const { isPostgresConfigured, getPostgresMarkers } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const markers = await getPostgresMarkers();
+      if (markers) {
+        revealedParticipantIds.clear();
+        for (const id of markers.revealed) revealedParticipantIds.add(id);
+
+        registeredParticipantIds.clear();
+        for (const id of markers.registered) registeredParticipantIds.add(id);
+
+        passkeyParticipantIds.clear();
+        allRegisteredCredentialIdsSet.clear();
+        for (const p of markers.passkeys) {
+          passkeyParticipantIds.add(p.participantId);
+          allRegisteredCredentialIdsSet.add(p.credentialId);
+        }
+
+        lastMarkersSyncTimestamp = now;
+        return;
+      }
+    } catch (pgErr) {
+      console.warn("Notice: PostgreSQL markers sync attempt:", pgErr);
+    }
+  }
+
   // 1. Cloud Blob sync (only when not running in isolated local test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
@@ -405,6 +432,15 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
     try {
       const pgState = await getPostgresEventState();
       if (pgState && pgState.participants && pgState.participants.length === 56) {
+        await syncMarkers(forceFresh);
+        for (const p of pgState.participants) {
+          if (revealedParticipantIds.has(p.id)) {
+            p.isRevealed = true;
+          }
+          if (registeredParticipantIds.has(p.id)) {
+            p.pinHash = p.pinHash || "registered_marker_present";
+          }
+        }
         inMemoryStateCache = pgState;
         inMemoryCacheTimestamp = Date.now();
         return pgState;
@@ -576,6 +612,23 @@ export async function getParticipantRuntimeState(
     return runtimeParticipantCache.get(participantId)!;
   }
 
+  // 0. Primary: PostgreSQL Transactional Store
+  const { isPostgresConfigured, getPostgresParticipantState } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pgParticipant = await getPostgresParticipantState(participantId);
+      if (pgParticipant) {
+        runtimeParticipantCache.set(participantId, pgParticipant);
+        if (pgParticipant.isRevealed) revealedParticipantIds.add(participantId);
+        if (pgParticipant.pinHash || pgParticipant.passkeyCredentialId) registeredParticipantIds.add(participantId);
+        if (pgParticipant.passkeyCredentialId) passkeyParticipantIds.add(participantId);
+        return pgParticipant;
+      }
+    } catch (pgErr) {
+      console.warn("Notice: PostgreSQL participant fetch attempt:", pgErr);
+    }
+  }
+
   // 1. Check dedicated Vercel Blob for this participant (if not in isolated test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
@@ -670,6 +723,16 @@ export async function saveParticipantRuntimeState(
       match.passkeyPublicKey = state.passkeyPublicKey;
       match.passkeyCounter = state.passkeyCounter;
       match.passkeyRegisteredAt = state.passkeyRegisteredAt;
+    }
+  }
+
+  // 0. Primary: PostgreSQL Transactional Store
+  const { isPostgresConfigured, savePostgresParticipantState } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await savePostgresParticipantState(state);
+    } catch (pgErr) {
+      console.error("Critical: Failed to save participant state to PostgreSQL:", pgErr);
     }
   }
 
@@ -1454,6 +1517,37 @@ export async function getDeviceBinding(
     return cached;
   }
 
+  // 0. Primary: PostgreSQL Transactional Store
+  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pg = await getPostgresDeviceOrHardwareBinding(cleanId, null, resetVersion);
+      if (pg) {
+        const record: DeviceBindingRecord = {
+          deviceId: pg.deviceId,
+          hardwareFingerprint: pg.hardwareFingerprint,
+          participantId: pg.participantId,
+          participantName: pg.participantName,
+          boundAt: new Date().toISOString(),
+          lastUsedAt: new Date().toISOString(),
+          ip: "postgres",
+          userAgent: "",
+          deviceModel: "Personal Device",
+          os: "Operating System",
+          browser: "Web Browser",
+          summary: "Bound Physical Device",
+          hasRevealed: false,
+          revealedAt: null,
+          resetVersion,
+        };
+        deviceBindingCache.set(cleanId, record);
+        return record;
+      }
+    } catch (pgErr) {
+      console.warn("Notice: PostgreSQL device fetch attempt:", pgErr);
+    }
+  }
+
   // 1. Check Vercel Private Blob (if not in isolated test mode)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
@@ -1520,6 +1614,37 @@ export async function getHardwareDeviceBinding(hwFp: string): Promise<DeviceBind
       return null;
     }
     return cached;
+  }
+
+  // 0. Primary: PostgreSQL Transactional Store
+  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pg = await getPostgresDeviceOrHardwareBinding("", cleanFp, resetVersion);
+      if (pg) {
+        const record: DeviceBindingRecord = {
+          deviceId: pg.deviceId,
+          hardwareFingerprint: pg.hardwareFingerprint,
+          participantId: pg.participantId,
+          participantName: pg.participantName,
+          boundAt: new Date().toISOString(),
+          lastUsedAt: new Date().toISOString(),
+          ip: "postgres",
+          userAgent: "",
+          deviceModel: "Personal Device",
+          os: "Operating System",
+          browser: "Web Browser",
+          summary: "Bound Physical Device",
+          hasRevealed: false,
+          revealedAt: null,
+          resetVersion,
+        };
+        hardwareBindingCache.set(cleanFp, record);
+        return record;
+      }
+    } catch (pgErr) {
+      console.warn("Notice: PostgreSQL hardware fetch attempt:", pgErr);
+    }
   }
 
   // 1. Check Vercel Private Blob
@@ -1642,6 +1767,20 @@ export function isValidPasskeyCredentialId(id: unknown): id is string {
 export async function getAllRegisteredPasskeyCredentials(): Promise<string[]> {
   await syncMarkers();
   const creds = new Set<string>();
+
+  const { isPostgresConfigured, getPostgresAllPasskeyCredentialIds } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const pgCreds = await getPostgresAllPasskeyCredentialIds();
+      for (const id of pgCreds) {
+        if (isValidPasskeyCredentialId(id)) {
+          creds.add(id.trim());
+        }
+      }
+    } catch (err) {
+      console.warn("Notice: PostgreSQL passkey creds fetch:", err);
+    }
+  }
 
   for (const id of allRegisteredCredentialIdsSet) {
     if (isValidPasskeyCredentialId(id)) {
@@ -2065,6 +2204,16 @@ export async function recordDeviceReveal(
 
   deviceBindingCache.set(cleanId, updated);
   const serialized = JSON.stringify(updated, null, 2);
+
+  // 0. Primary: PostgreSQL Transactional Store
+  const { isPostgresConfigured, recordPostgresDeviceReveal } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await recordPostgresDeviceReveal(cleanId, participantId);
+    } catch (pgErr) {
+      console.warn("Notice updating reveal in PostgreSQL:", pgErr);
+    }
+  }
 
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {

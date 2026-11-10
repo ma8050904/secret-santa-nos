@@ -110,15 +110,16 @@ function getHardwareMetrics(): string {
   const dpr = window.devicePixelRatio || 1;
   const realWidth = Math.round((screen?.width || 0) * dpr);
   const realHeight = Math.round((screen?.height || 0) * dpr);
+  const maxDim = Math.max(realWidth, realHeight);
+  const minDim = Math.min(realWidth, realHeight);
   const colorDepth = screen?.colorDepth || 0;
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
   const lang = (navigator.language || "").split("-")[0].toLowerCase();
 
   return [
-    realWidth,
-    realHeight,
+    maxDim,
+    minDim,
     colorDepth,
-    navigator.hardwareConcurrency || 0,
     navigator.maxTouchPoints || 0,
     navigator.platform || "",
     timezone,
@@ -129,7 +130,7 @@ function getHardwareMetrics(): string {
 /**
  * Returns a cryptographically hashed, hardware-anchored device signature.
  * Strictly stable across Private / Incognito browsing tabs on the same physical hardware,
- * immune to Safari / Chrome private browsing canvas & audio noise injection.
+ * immune to Safari / Chrome private browsing canvas & audio noise injection and core masking.
  */
 export async function getHardwareFingerprint(): Promise<string> {
   if (cachedHwFingerprint) return cachedHwFingerprint;
@@ -139,7 +140,7 @@ export async function getHardwareFingerprint(): Promise<string> {
   }
 
   try {
-    // 1. Stable WebGL hardware limits (immune to private mode masking)
+    // 1. Stable WebGL hardware limits (Apple GPU silicon limits, immune to private mode masking)
     let webglStable = "no-webgl";
     try {
       const canvas = document.createElement("canvas");
@@ -148,27 +149,25 @@ export async function getHardwareFingerprint(): Promise<string> {
       if (gl) {
         const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
         const maxRenderbufferSize = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || 0;
-        const maxViewportDims = (gl.getParameter(gl.MAX_VIEWPORT_DIMS) || []).join("x");
-        const maxVertexAttribs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 0;
-        webglStable = `${maxTextureSize}~${maxRenderbufferSize}~${maxViewportDims}~${maxVertexAttribs}`;
+        webglStable = `${maxTextureSize}~${maxRenderbufferSize}`;
       }
     } catch {
       webglStable = "webgl-err";
     }
 
-    // 2. Physical hardware display & processor metrics
+    // 2. Physical hardware display & architecture metrics
     const hwMetrics = getHardwareMetrics();
 
-    // The signature combines physical silicon, GPU capabilities, display resolution, and hardware architecture.
-    // It purposefully avoids volatile Canvas/Audio pixel buffers which Safari private browsing randomizes.
-    const rawSignature = `silicon_anchor###${webglStable}###${hwMetrics}`;
+    // The signature combines physical silicon GPU capabilities, display resolution, and hardware architecture.
+    // It purposefully avoids volatile Canvas/Audio pixel buffers and core counts which Safari private browsing randomizes.
+    const rawSignature = `silicon_anchor_v3###${webglStable}###${hwMetrics}`;
 
     if (window.crypto?.subtle) {
       const msgUint8 = new TextEncoder().encode(rawSignature);
       const hashBuffer = await window.crypto.subtle.digest("SHA-256", msgUint8);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      cachedHwFingerprint = `hw_v2_${hashHex}`;
+      cachedHwFingerprint = `hw_v3_${hashHex}`;
     } else {
       let hash = 0;
       for (let i = 0; i < rawSignature.length; i++) {
@@ -176,7 +175,7 @@ export async function getHardwareFingerprint(): Promise<string> {
         hash = (hash << 5) - hash + char;
         hash |= 0;
       }
-      cachedHwFingerprint = `hw_v2_fallback_${Math.abs(hash).toString(16)}`;
+      cachedHwFingerprint = `hw_v3_fallback_${Math.abs(hash).toString(16)}`;
     }
 
     // Set cookie for automatic transmission on subsequent server requests
