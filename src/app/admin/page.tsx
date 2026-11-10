@@ -837,244 +837,105 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* ===============================================================
-                RULES & DRAW MODE SELECTOR (Free Demo vs. Constrained Official)
+                EVENT CONTROLS TOOLBAR (COMPACT SMALL BUTTONS)
                =============================================================== */}
-            <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-amber-500/20">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/20 to-emerald-600/30 text-amber-300 shadow-lg">
-                    <Sparkles className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h3 className="font-serif text-lg font-bold text-white flex items-center gap-2">
-                      <span>نظام وقواعد القرعة (Secret Santa Rules Mode)</span>
-                    </h3>
-                    <p className="text-xs text-emerald-200/80">
-                      التحكم في تفعيل أو إلغاء الشروط والمجموعات الخاصة للاختبار أو الحفل الرسمي
-                    </p>
-                  </div>
-                </div>
+            <div className="rounded-2xl border border-amber-500/30 bg-[#071d13]/90 p-3.5 shadow-xl backdrop-blur-md">
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+                {/* Rules Mode Controls */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5 ml-1">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <span>نظام القرعة:</span>
+                  </span>
 
-                <div className="flex items-center gap-2">
                   {state.drawMode === "free" ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/60 bg-sky-950/80 px-3.5 py-1 text-xs font-bold text-sky-200 shadow-sm">
-                      <span className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
-                      <span>الوضع العادي (بدون شروط - وضع التجربة)</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/60 bg-sky-950/80 px-2.5 py-1 text-xs font-bold text-sky-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-ping" />
+                      <span>عادية (بدون شروط - للتجربة)</span>
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-950/80 px-3.5 py-1 text-xs font-bold text-emerald-200 shadow-sm">
-                      <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                      <span>الوضع الرسمي (مفعل بالشروط الخاصة)</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-950/80 px-2.5 py-1 text-xs font-bold text-emerald-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      <span>رسمية (مفعلة بالشروط)</span>
                     </span>
                   )}
-                </div>
-              </div>
 
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Option 1: Constrained Mode */}
-                <div
-                  className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
-                    state.drawMode !== "free"
-                      ? "border-emerald-400/80 bg-emerald-950/40 shadow-lg ring-1 ring-emerald-400/40"
-                      : "border-slate-800 bg-slate-950/40 opacity-70 hover:opacity-100"
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-serif text-base font-bold text-emerald-200 flex items-center gap-2">
-                        <span>القرعة المشروطة (الرسمية)</span>
-                        {state.drawMode !== "free" && (
-                          <span className="text-[10px] font-bold uppercase rounded-md bg-emerald-500/20 text-emerald-300 px-2 py-0.5 border border-emerald-500/30">
-                            مفعل حالياً
-                          </span>
-                        )}
-                      </h4>
-                    </div>
-                    <p className="text-xs text-emerald-100/90 leading-relaxed">
-                      يُطبق كافة الشروط الصارمة: عزل المجموعة الخاصة (24 طالباً)، والتوجيهات الإلزامية (Maysoon ➔ Qais، Diana ➔ Mohammad، Ghazal ⇄ George، وعدم تبادل داراوي أو رغد ومحمد).
-                    </p>
-                    <p className="mt-2 text-[11px] text-emerald-300/60">
-                      هذا هو الوضع الرسمي المخصص للحفل الحقيقي.
-                    </p>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-emerald-500/20 flex justify-end">
-                    {state.drawMode === "free" ? (
-                      <button
-                        onClick={() => {
-                          setPendingDrawMode("constrained");
-                          setShowDrawModeModal(true);
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl border border-emerald-400/60 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all hover:scale-105 cursor-pointer"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        <span>إعادة تفعيل الشروط والقرعة الرسمية</span>
-                      </button>
-                    ) : (
-                      <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-                        <Check className="h-4 w-4" />
-                        <span>قواعد الشروط نشطة الآن 100%</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Option 2: Free Mode */}
-                <div
-                  className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
-                    state.drawMode === "free"
-                      ? "border-sky-400/80 bg-sky-950/40 shadow-lg ring-1 ring-sky-400/40"
-                      : "border-slate-800 bg-slate-950/40 opacity-70 hover:opacity-100"
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-serif text-base font-bold text-sky-200 flex items-center gap-2">
-                        <span>القرعة العادية (بدون أي شروط)</span>
-                        {state.drawMode === "free" && (
-                          <span className="text-[10px] font-bold uppercase rounded-md bg-sky-500/20 text-sky-300 px-2 py-0.5 border border-sky-500/30">
-                            مفعل حالياً
-                          </span>
-                        )}
-                      </h4>
-                    </div>
-                    <p className="text-xs text-sky-100/90 leading-relaxed">
-                      قرعة حرة وعشوائية بالكامل 100% بين جميع الـ 56 طالباً دون أي استثناءات، لا توجد مجموعات مغلقة ولا هدايا موجهة، والشرط الوحيد ألا يهدي الشخص نفسه.
-                    </p>
-                    <p className="mt-2 text-[11px] text-sky-300/60">
-                      مخصص لتجربة الموقع والاختبار أمام الصف غداً بدون كشف الشروط الحقيقية.
-                    </p>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-sky-500/20 flex justify-end">
-                    {state.drawMode !== "free" ? (
-                      <button
-                        onClick={() => {
-                          setPendingDrawMode("free");
-                          setShowDrawModeModal(true);
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl border border-sky-400/60 bg-gradient-to-r from-sky-600 to-sky-700 hover:from-sky-500 hover:to-sky-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all hover:scale-105 cursor-pointer"
-                      >
-                        <Dices className="h-3.5 w-3.5" />
-                        <span>إلغاء الشروط وتفعيل القرعة العادية (للتجربة)</span>
-                      </button>
-                    ) : (
-                      <span className="text-xs text-sky-400 font-medium flex items-center gap-1">
-                        <Check className="h-4 w-4" />
-                        <span>الوضع العادي نشط الآن للتجربة</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* ===============================================================
-                2. DRAW MANAGEMENT SECTION
-               =============================================================== */}
-            <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
-              <div className="flex items-center gap-2.5 pb-4 border-b border-amber-500/20">
-                <Dices className="h-5 w-5 text-amber-400" />
-                <h3 className="font-serif text-lg font-bold text-white tracking-wide">
-                  Draw Management
-                </h3>
-              </div>
-
-              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Action 1: Full Event Reset */}
-                <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-[#0a1e12] to-[#040f09] p-5 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-serif text-base font-bold text-white">
-                        Full Event Reset
-                      </h4>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-950/80 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300 uppercase tracking-wider">
-                        Preserves Draw
-                      </span>
-                    </div>
-                    <p className="text-xs text-emerald-200/90 leading-relaxed">
-                      Reset all participant PINs, reveal statuses, and device locks while keeping assignments 100% intact.
-                    </p>
-                    <p className="mt-2 text-[11px] text-emerald-300/60 leading-normal">
-                      Creates an automatic backup. Clears all registrations and unlocks all devices without re-drawing or altering pairings.
-                    </p>
-                  </div>
-
-                  <div className="mt-5 pt-3 border-t border-emerald-500/20 flex justify-end">
+                  {state.drawMode === "free" ? (
                     <button
-                      onClick={() => setActiveModal("FULL_RESET")}
-                      className="flex items-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-700 hover:bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] cursor-pointer"
+                      type="button"
+                      onClick={() => {
+                        setPendingDrawMode("constrained");
+                        setShowDrawModeModal(true);
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg border border-emerald-400/60 bg-emerald-700 hover:bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:scale-105 cursor-pointer"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Full Event Reset</span>
+                      <span>تفعيل الشروط الرسمية</span>
                     </button>
-                  </div>
-                </div>
-
-                {/* Action 2: Regenerate Full Draw */}
-                <div className="rounded-2xl border border-red-500/30 bg-gradient-to-b from-[#190a0d] to-[#0d0406] p-5 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-serif text-base font-bold text-white">
-                        Regenerate Full Draw
-                      </h4>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-red-950/80 px-2.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider">
-                        Re-draws all
-                      </span>
-                    </div>
-                    <p className="text-xs text-red-200/90 leading-relaxed">
-                      Re-randomize assignments for all participants while strictly adhering to all rules.
-                    </p>
-                    <p className="mt-2 text-[11px] text-red-300/60 leading-normal">
-                      Creates an automatic backup. Regenerates assignments for all {state.totalParticipants} participants with all mandatory constraints.
-                    </p>
-                  </div>
-
-                  <div className="mt-5 pt-3 border-t border-red-500/20 flex justify-end">
+                  ) : (
                     <button
-                      onClick={() => setActiveModal("FULL_REGENERATE")}
-                      className="flex items-center gap-2 rounded-xl border border-red-500/50 bg-red-900/80 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:bg-red-800 hover:scale-[1.02] cursor-pointer"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      <span>Regenerate Full Draw</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Action 3: Reroll Subgroup */}
-                <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-b from-[#18150a] to-[#0d0b04] p-5 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-serif text-base font-bold text-white">
-                        Reroll Designated Subgroup
-                      </h4>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-950/80 px-2.5 py-0.5 text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-                        Subgroup Only
-                      </span>
-                    </div>
-                    <p className="text-xs text-amber-200/90 leading-relaxed">
-                      Reroll the designated 24-person group only, leaving the assignments of the other participants unchanged.
-                    </p>
-                    <p className="mt-2 text-[11px] text-amber-300/60 leading-normal">
-                      Creates an automatic backup. Rerolls the closed subgroup with all mandatory constraints while preserving the other assignments.
-                    </p>
-                  </div>
-
-                  <div className="mt-5 pt-3 border-t border-amber-500/20 flex justify-end">
-                    <button
-                      onClick={() => setActiveModal("REROLL_SUBGROUP")}
-                      className="flex items-center gap-2 rounded-xl border border-amber-500/50 bg-amber-600 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg transition-all hover:bg-amber-500 hover:scale-[1.02] cursor-pointer"
+                      type="button"
+                      onClick={() => {
+                        setPendingDrawMode("free");
+                        setShowDrawModeModal(true);
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg border border-sky-400/60 bg-sky-700 hover:bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:scale-105 cursor-pointer"
                     >
                       <Dices className="h-3.5 w-3.5" />
-                      <span>Reroll Subgroup</span>
+                      <span>تفعيل القرعة العادية (تجربة)</span>
                     </button>
-                  </div>
+                  )}
+                </div>
+
+                {/* Draw & Device Management Buttons */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Reroll Subgroup */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal("REROLL_SUBGROUP")}
+                    disabled={state.drawMode === "free"}
+                    title={state.drawMode === "free" ? "معطل في وضع القرعة الحرة" : "خلط أعضاء المجموعة الخاصة (24) فقط"}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-bold text-slate-950 shadow transition-all cursor-pointer"
+                  >
+                    <Dices className="h-3.5 w-3.5" />
+                    <span>خلط المجموعة (24)</span>
+                  </button>
+
+                  {/* Regenerate Full Draw */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal("FULL_REGENERATE")}
+                    className="flex items-center gap-1.5 rounded-lg border border-red-500/50 bg-red-900/80 hover:bg-red-800 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>إعادة سحب القرعة</span>
+                  </button>
+
+                  {/* Reset All Device Bindings */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal("RESET_DEVICES")}
+                    className="flex items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-900/80 hover:bg-sky-800 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                  >
+                    <Smartphone className="h-3.5 w-3.5" />
+                    <span>فك قفل الأجهزة</span>
+                  </button>
+
+                  {/* Full Event Reset */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal("FULL_RESET")}
+                    className="flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-800 hover:bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white shadow transition-all cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>إعادة ضبط شاملة</span>
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* ===============================================================
-                3. DEVICE MANAGEMENT & REVEAL TELEMETRY SECTION
+                2. DEVICE MANAGEMENT & REVEAL TELEMETRY SECTION
                =============================================================== */}
             <div className="rounded-3xl border border-amber-500/30 bg-[#071d13]/90 p-6 shadow-2xl backdrop-blur-md">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-amber-500/20 gap-3">
@@ -1095,35 +956,13 @@ export default function AdminDashboardPage() {
                     <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
                     <span>{state.devices?.length || 0} Registered Devices</span>
                   </span>
-                </div>
-              </div>
-
-              {/* Reset Devices Action Box */}
-              <div className="mt-6 rounded-2xl border border-sky-500/30 bg-gradient-to-b from-[#0a1820] to-[#040c11] p-5">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2.5 mb-2">
-                      <h4 className="font-serif text-base font-bold text-white">
-                        Reset All Device Bindings
-                      </h4>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-950/80 px-2.5 py-0.5 text-[10px] font-bold text-sky-300 uppercase tracking-wider">
-                        Requires confirmation
-                      </span>
-                    </div>
-                    <p className="text-xs text-sky-200/90 leading-relaxed max-w-2xl">
-                      Unlink registered devices so participants can log in again.
-                    </p>
-                    <p className="mt-1.5 text-[11px] text-emerald-300/80 max-w-2xl">
-                      🛡️ <strong>Separated Operations:</strong> Unlinking devices does not delete participant PINs, regenerate the draw, or alter reveal statuses. It only frees locked devices so participants can log in from a new device when necessary.
-                    </p>
-                  </div>
-
                   <button
+                    type="button"
                     onClick={() => setActiveModal("RESET_DEVICES")}
-                    className="shrink-0 flex items-center gap-2 rounded-xl border border-sky-500/50 bg-sky-900/80 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:bg-sky-800 hover:scale-[1.02] cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-900/80 hover:bg-sky-800 px-3 py-1 text-xs font-bold text-white shadow transition-all cursor-pointer"
                   >
                     <Smartphone className="h-3.5 w-3.5" />
-                    <span>Reset All Device Bindings</span>
+                    <span>فك قفل الأجهزة</span>
                   </button>
                 </div>
               </div>
