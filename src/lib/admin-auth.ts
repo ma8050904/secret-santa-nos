@@ -76,6 +76,7 @@ export function verifyAdminSessionToken(token: string): boolean {
 
 /**
  * Sets the admin session cookie on an outgoing response.
+ * Session-scoped (no persistent maxAge) so it expires when the browser session ends.
  */
 export function setAdminSessionCookie(res: NextResponse): string {
   const token = createAdminSessionToken();
@@ -84,7 +85,6 @@ export function setAdminSessionCookie(res: NextResponse): string {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 24 * 14, // 14 days
   });
   return token;
 }

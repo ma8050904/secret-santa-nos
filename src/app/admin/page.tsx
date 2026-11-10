@@ -32,6 +32,10 @@ import {
   ChevronUp,
   Copy,
   ExternalLink,
+  Gift,
+  Download,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { startAuthentication, startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
@@ -137,23 +141,91 @@ export default function AdminDashboardPage() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
   const [hasCopiedPortalLink, setHasCopiedPortalLink] = useState(false);
+  const [isQrEnlarged, setIsQrEnlarged] = useState(false);
 
   const handleOpenQrModal = useCallback(async () => {
     try {
-      const dataUrl = await QRCode.toDataURL(PRODUCTION_PORTAL_URL, {
-        width: 320,
-        margin: 2,
-        color: {
-          dark: "#000000",
-          light: "#ffffff",
-        },
-      });
-      setQrCodeDataUrl(dataUrl);
+      if (typeof window !== "undefined") {
+        const canvas = document.createElement("canvas");
+        const qrSize = 440;
+        await QRCode.toCanvas(canvas, PRODUCTION_PORTAL_URL, {
+          width: qrSize,
+          margin: 2,
+          errorCorrectionLevel: "H",
+          color: {
+            dark: "#06381e", // Rich Christmas Forest Green
+            light: "#ffffff",
+          },
+        });
+
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const badgeSize = 82;
+          const x = (canvas.width - badgeSize) / 2;
+          const y = (canvas.height - badgeSize) / 2;
+          const radius = 18;
+
+          // Outer white protective shield
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(x - 5, y - 5, badgeSize + 10, badgeSize + 10, radius + 2);
+          } else {
+            ctx.rect(x - 5, y - 5, badgeSize + 10, badgeSize + 10);
+          }
+          ctx.fill();
+
+          // Festive Christmas Red Gradient badge
+          const grad = ctx.createLinearGradient(x, y, x + badgeSize, y + badgeSize);
+          grad.addColorStop(0, "#dc2626"); // Crimson red
+          grad.addColorStop(1, "#881337"); // Deep velvet Christmas red
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(x, y, badgeSize, badgeSize, radius);
+          } else {
+            ctx.rect(x, y, badgeSize, badgeSize);
+          }
+          ctx.fill();
+
+          // Festive Gold Border
+          ctx.strokeStyle = "#fbbf24";
+          ctx.lineWidth = 3.5;
+          ctx.stroke();
+
+          // Centered Holiday Gift Emoji
+          ctx.font = "42px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🎁", canvas.width / 2, canvas.height / 2 + 3);
+        }
+
+        setQrCodeDataUrl(canvas.toDataURL("image/png"));
+      } else {
+        const dataUrl = await QRCode.toDataURL(PRODUCTION_PORTAL_URL, {
+          width: 360,
+          margin: 2,
+          errorCorrectionLevel: "H",
+          color: {
+            dark: "#06381e",
+            light: "#ffffff",
+          },
+        });
+        setQrCodeDataUrl(dataUrl);
+      }
     } catch (err) {
-      console.error("Failed to generate QR code", err);
+      console.error("Failed to generate Christmas QR code", err);
     }
     setShowQrModal(true);
   }, [PRODUCTION_PORTAL_URL]);
+
+  const handleDownloadQr = useCallback(() => {
+    if (!qrCodeDataUrl) return;
+    const link = document.createElement("a");
+    link.href = qrCodeDataUrl;
+    link.download = "Secret-Santa-Holiday-QR.png";
+    link.click();
+  }, [qrCodeDataUrl]);
 
   // Custom password management state (Mac Keychain & Touch ID compatible)
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -240,17 +312,10 @@ export default function AdminDashboardPage() {
     }
   }, [isAuthenticated, fetchAdminData]);
 
-  // Check existing session & passkeys on mount
+  // Check registered passkeys on mount (Always require fresh Apple Touch ID authentication on entry)
   useEffect(() => {
-    fetch("/api/admin/status", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.success && data.data) {
-          setIsAuthenticated(true);
-          setState(data.data);
-        }
-      })
-      .catch(() => {});
+    // Proactively clear any legacy session so entering /admin ALWAYS demands fresh Touch ID
+    fetch("/api/admin/logout", { method: "POST", cache: "no-store" }).catch(() => {});
 
     fetch("/api/admin/passkey/list", { cache: "no-store" })
       .then((res) => res.json())
@@ -655,14 +720,19 @@ export default function AdminDashboardPage() {
               {/* Primary Biometric Passkey Action */}
               <div className="mt-6 space-y-3">
                 {hasPasskeys ? (
-                  <button
-                    onClick={handlePasskeyLogin}
-                    disabled={isPasskeyLoading}
-                    className="flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 py-4 text-sm font-bold text-white shadow-xl transition-all hover:scale-[1.02] hover:brightness-110 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Fingerprint className="h-6 w-6 text-amber-300" />
-                    <span>{isPasskeyLoading ? "Verifying Passkey..." : "Sign in with Touch ID / Passkey"}</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={handlePasskeyLogin}
+                      disabled={isPasskeyLoading}
+                      className="flex w-full items-center justify-center gap-3 rounded-2xl border-2 border-emerald-400/80 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 py-4 text-sm font-bold text-white shadow-[0_4px_25px_rgba(5,150,105,0.4)] transition-all hover:scale-[1.02] hover:brightness-110 disabled:opacity-50 cursor-pointer"
+                    >
+                      <Fingerprint className="h-6 w-6 text-amber-300 animate-pulse" />
+                      <span>{isPasskeyLoading ? "Verifying Mac Touch ID..." : "Sign in with Mac Touch ID"}</span>
+                    </button>
+                    <p className="text-[11px] text-center text-emerald-200/70 font-medium">
+                      Touch ID authentication is required every time you enter the admin panel
+                    </p>
+                  </>
                 ) : (
                   <button
                     onClick={() => handleRegisterPasskey("Mac Touch ID")}
@@ -1839,54 +1909,125 @@ export default function AdminDashboardPage() {
         )}
 
         {/* ===================================================================
-            PARTICIPANT PORTAL QR CODE MODAL (APPLE DESIGN)
+            CHRISTMAS-THEMED PARTICIPANT PORTAL QR CODE MODAL
            =================================================================== */}
         {showQrModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
-              className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
-              onClick={() => setShowQrModal(false)}
+              className="fixed inset-0 bg-black/85 backdrop-blur-md transition-opacity"
+              onClick={() => {
+                setShowQrModal(false);
+                setIsQrEnlarged(false);
+              }}
             />
-            <div className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-b from-[#111914] to-[#0a0f0d] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200 text-center">
+            <div
+              className={`relative w-full ${
+                isQrEnlarged ? "max-w-xl" : "max-w-md"
+              } overflow-hidden rounded-3xl border-2 border-amber-400/60 bg-gradient-to-b from-[#13281c] via-[#0d1a13] to-[#07100b] p-6 sm:p-7 shadow-[0_0_60px_rgba(220,38,38,0.35)] z-10 animate-in fade-in zoom-in-95 duration-200 text-center transition-all`}
+            >
+              {/* Christmas Decorative Accents */}
+              <div className="absolute top-2 left-3 pointer-events-none text-2xl select-none">
+                🎄
+              </div>
+              <div className="absolute top-2 right-12 pointer-events-none text-xl select-none">
+                ✨
+              </div>
+
+              {/* Close Button */}
               <button
                 type="button"
-                onClick={() => setShowQrModal(false)}
-                className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"
+                onClick={() => {
+                  setShowQrModal(false);
+                  setIsQrEnlarged(false);
+                }}
+                className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
 
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5 border border-white/10 text-amber-300">
-                <QrCode className="h-6 w-6" />
+              {/* Festive Santa / Gift Header Badge */}
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-gradient-to-r from-red-900/60 via-amber-900/40 to-emerald-900/60 px-3.5 py-1 text-xs font-semibold text-amber-200 shadow-inner">
+                <span>🎅</span>
+                <span>Secret Santa 2024 Portal</span>
+                <span>🎁</span>
               </div>
 
-              <h3 className="font-serif text-lg font-bold text-white">
-                Participant Portal QR Code
+              <h3 className="mt-3 font-serif text-xl sm:text-2xl font-extrabold text-white tracking-wide">
+                Holiday Gift Exchange QR
               </h3>
-              <p className="mt-1 text-xs text-white/60">
-                Scan with mobile camera to open the live Secret Santa gift portal
+              <p className="mt-1 text-xs text-emerald-200/80">
+                Scan with mobile camera to open the Secret Santa gift portal
               </p>
 
-              {/* QR Image Container */}
+              {/* QR Image Container in Christmas Frame */}
               <div className="my-5 flex justify-center">
-                <div className="rounded-2xl bg-white p-3 shadow-xl">
+                <div className="relative rounded-3xl border-4 border-amber-400/90 bg-white p-3.5 sm:p-4 shadow-[0_0_35px_rgba(220,38,38,0.4),0_0_15px_rgba(251,191,36,0.3)] ring-4 ring-red-600/30">
+                  {/* Decorative Holiday Corner Pins */}
+                  <div className="absolute -top-3 -left-3 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow-md border-2 border-white text-xs select-none">
+                    🎄
+                  </div>
+                  <div className="absolute -top-3 -right-3 flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 text-white shadow-md border-2 border-white text-xs select-none">
+                    ⭐
+                  </div>
+                  <div className="absolute -bottom-3 -left-3 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md border-2 border-white text-xs select-none">
+                    🎁
+                  </div>
+                  <div className="absolute -bottom-3 -right-3 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow-md border-2 border-white text-xs select-none">
+                    🔔
+                  </div>
+
                   {qrCodeDataUrl ? (
                     <img
                       src={qrCodeDataUrl}
-                      alt="Secret Santa QR Code"
-                      width={240}
-                      height={240}
-                      className="rounded-lg"
+                      alt="Secret Santa Holiday QR Code"
+                      width={isQrEnlarged ? 340 : 250}
+                      height={isQrEnlarged ? 340 : 250}
+                      className="rounded-2xl transition-all duration-300 mx-auto"
                     />
                   ) : (
-                    <div className="h-60 w-60 flex items-center justify-center text-slate-400">
-                      <RefreshCw className="h-6 w-6 animate-spin" />
+                    <div className="h-64 w-64 flex items-center justify-center text-slate-400">
+                      <RefreshCw className="h-6 w-6 animate-spin text-emerald-600" />
                     </div>
                   )}
+
+                  <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-emerald-950/70">
+                    ✨ Secret Santa • Scan to Play ✨
+                  </div>
                 </div>
               </div>
 
-              {/* URL & Copy Link Bar */}
+              {/* Action Toolbar */}
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={handleDownloadQr}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-950/60 hover:bg-amber-900/80 px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors cursor-pointer"
+                  title="Save festive QR code image for slides or printing"
+                >
+                  <Download className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Download Image</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsQrEnlarged((prev) => !prev)}
+                  className="flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-950/60 hover:bg-emerald-900/80 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition-colors cursor-pointer"
+                  title="Enlarge for classroom projector display"
+                >
+                  {isQrEnlarged ? (
+                    <>
+                      <Minimize2 className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>Standard View</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>Projector View</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Production URL & Copy Link Bar */}
               <div className="rounded-xl border border-white/10 bg-black/40 p-2.5 flex items-center justify-between gap-2 text-left">
                 <div className="truncate text-xs font-mono text-emerald-300">
                   {PRODUCTION_PORTAL_URL}
@@ -1914,7 +2055,7 @@ export default function AdminDashboardPage() {
                 </button>
               </div>
 
-              <div className="mt-4 flex items-center justify-center gap-2">
+              <div className="mt-3 flex items-center justify-center gap-2">
                 <a
                   href={PRODUCTION_PORTAL_URL}
                   target="_blank"
