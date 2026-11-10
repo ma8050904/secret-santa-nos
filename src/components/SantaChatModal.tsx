@@ -85,8 +85,6 @@ export function SantaChatModal() {
       const replyContent =
         data && data.success && typeof data.reply === "string"
           ? data.reply
-          : isArabic(textToSend)
-          ? "هو هو هو! 🎅 عاصفة ثلجية تشوش على بلورتي السحرية حالياً! ❄️ حاول سؤالي مجدداً بعد لحظات يا صديقي!"
           : "Ho ho ho! 🎅 A little snowstorm is causing static in my communicator! ❄️✨ Please ask me again in just a moment!";
 
       const santaMessage: Message = {
@@ -101,9 +99,8 @@ export function SantaChatModal() {
       const fallbackMsg: Message = {
         id: `santa-${Date.now()}`,
         role: "santa",
-        content: isArabic(textToSend)
-          ? "هو هو هو! 🎅 ورشة الألعاب مشغولة جداً الآن! تفضل بسؤالي مرة أخرى بعد ثوانٍ قليلة! 🎄"
-          : "Ho ho ho! 🎅 The workshop is bustling with activity right now! Give me a second and try asking again! 🎄✨",
+        content:
+          "Ho ho ho! 🎅 The workshop is bustling with activity right now! Give me a second and try asking again! 🎄✨",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, fallbackMsg]);

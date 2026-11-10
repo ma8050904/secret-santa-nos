@@ -179,12 +179,18 @@ function SecretSantaApp() {
       } else {
         setActiveParticipant(null);
         setActivePin(null);
+        setBoundDeviceUser(null);
+        setStoredBoundParticipant(null);
+        lockedUserRef.current = null;
         setIsCurrentlyRevealed(false);
         setRevealedRecipient(undefined);
       }
     } catch {
       setActiveParticipant(null);
       setActivePin(null);
+      setBoundDeviceUser(null);
+      setStoredBoundParticipant(null);
+      lockedUserRef.current = null;
       setIsCurrentlyRevealed(false);
       setRevealedRecipient(undefined);
     }
@@ -207,10 +213,14 @@ function SecretSantaApp() {
         setStoredBoundParticipant(boundParticipant);
         lockedUserRef.current = boundParticipant;
       } else if (res.ok && !data.bound) {
-        // Device explicitly unbound by admin on server
+        // Device explicitly unbound by admin on server - completely wipe local state
+        setActiveParticipant(null);
+        setActivePin(null);
         setBoundDeviceUser(null);
         setStoredBoundParticipant(null);
         lockedUserRef.current = null;
+        setIsCurrentlyRevealed(false);
+        setRevealedRecipient(undefined);
       }
     } catch {
       // Non-blocking
@@ -246,10 +256,10 @@ function SecretSantaApp() {
           }
 
           showToast({
-            title: `هذا الجهاز مسجل باسم ${lockedUser.name}`,
-            message: `عذراً، هذا الجهاز مرتبط رسمياً بحساب ${lockedUser.name}. لحفظ سرية القرعة ومنع كشف أسماء الآخرين، لا يمكنك الدخول أو فتح هدية أي شخص آخر من هذا الجهاز.`,
+            title: `Device Linked to ${lockedUser.name}`,
+            message: `This device is officially registered to ${lockedUser.name}. To preserve draw secrecy and gift privacy, accessing or revealing any other participant's account from this device is not permitted.`,
             type: "warning",
-            actionLabel: `🎁 افتح هدية ${lockedUser.name}`,
+            actionLabel: `🎁 Open ${lockedUser.name}'s Gift`,
             onAction: () => {
               if (activeParticipant && activePin) {
                 setShowRevealModal(true);
@@ -376,7 +386,7 @@ function SecretSantaApp() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-[11px] font-medium text-emerald-200/80">
-                      هذا الجهاز مرتبط رسمياً بحساب:
+                      This device is registered to:
                     </p>
                     <p className="font-serif text-sm font-bold text-amber-200 truncate">
                       {(activeParticipant || boundDeviceUser)?.name}
@@ -404,7 +414,7 @@ function SecretSantaApp() {
                     className="flex items-center gap-2 rounded-xl border border-amber-400/80 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 px-4 py-2 text-xs font-bold shadow-lg transition-transform hover:scale-105 cursor-pointer"
                   >
                     <Gift className="h-4 w-4" />
-                    <span>افتح هديتك الآن</span>
+                    <span>Open Your Gift Now</span>
                   </button>
                 </div>
               </div>
@@ -509,7 +519,7 @@ function SecretSantaApp() {
                       onClick={() => setToastNotification(null)}
                       className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-amber-300/80 hover:text-white transition-colors cursor-pointer"
                     >
-                      إغلاق
+                      Dismiss
                     </button>
                   </div>
                 )}

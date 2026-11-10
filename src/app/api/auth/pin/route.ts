@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `هذا الجهاز مرتبط رسمياً بحساب ${existingDeviceBinding.participantName} (This device is registered to ${existingDeviceBinding.participantName}). لا يمكن الدخول إلى حسابات أخرى من نفس الجهاز.`,
+          error: `This device is officially registered to ${existingDeviceBinding.participantName}. Accessing other participant accounts from this device is not permitted.`,
           boundParticipantName: existingDeviceBinding.participantName,
           boundParticipantId: existingDeviceBinding.participantId,
         },

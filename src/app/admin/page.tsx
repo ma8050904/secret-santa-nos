@@ -151,61 +151,18 @@ export default function AdminDashboardPage() {
         await QRCode.toCanvas(canvas, PRODUCTION_PORTAL_URL, {
           width: qrSize,
           margin: 2,
-          errorCorrectionLevel: "H",
+          errorCorrectionLevel: "M",
           color: {
-            dark: "#06381e", // Rich Christmas Forest Green
+            dark: "#06381e", // Christmas Forest Pine Green
             light: "#ffffff",
           },
         });
-
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          const badgeSize = 82;
-          const x = (canvas.width - badgeSize) / 2;
-          const y = (canvas.height - badgeSize) / 2;
-          const radius = 18;
-
-          // Outer white protective shield
-          ctx.fillStyle = "#ffffff";
-          ctx.beginPath();
-          if (typeof ctx.roundRect === "function") {
-            ctx.roundRect(x - 5, y - 5, badgeSize + 10, badgeSize + 10, radius + 2);
-          } else {
-            ctx.rect(x - 5, y - 5, badgeSize + 10, badgeSize + 10);
-          }
-          ctx.fill();
-
-          // Festive Christmas Red Gradient badge
-          const grad = ctx.createLinearGradient(x, y, x + badgeSize, y + badgeSize);
-          grad.addColorStop(0, "#dc2626"); // Crimson red
-          grad.addColorStop(1, "#881337"); // Deep velvet Christmas red
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          if (typeof ctx.roundRect === "function") {
-            ctx.roundRect(x, y, badgeSize, badgeSize, radius);
-          } else {
-            ctx.rect(x, y, badgeSize, badgeSize);
-          }
-          ctx.fill();
-
-          // Festive Gold Border
-          ctx.strokeStyle = "#fbbf24";
-          ctx.lineWidth = 3.5;
-          ctx.stroke();
-
-          // Centered Holiday Gift Emoji
-          ctx.font = "42px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("🎁", canvas.width / 2, canvas.height / 2 + 3);
-        }
-
         setQrCodeDataUrl(canvas.toDataURL("image/png"));
       } else {
         const dataUrl = await QRCode.toDataURL(PRODUCTION_PORTAL_URL, {
           width: 360,
           margin: 2,
-          errorCorrectionLevel: "H",
+          errorCorrectionLevel: "M",
           color: {
             dark: "#06381e",
             light: "#ffffff",
@@ -1945,16 +1902,13 @@ export default function AdminDashboardPage() {
                 <X className="h-4 w-4" />
               </button>
 
-              {/* Festive Santa / Gift Header Badge */}
-              <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-gradient-to-r from-red-900/60 via-amber-900/40 to-emerald-900/60 px-3.5 py-1 text-xs font-semibold text-amber-200 shadow-inner">
-                <span>🎅</span>
-                <span>Secret Santa 2024 Portal</span>
+              <div className="flex items-center justify-center gap-2 text-2xl pt-2">
+                <span>🎄</span>
+                <span className="font-serif text-xl sm:text-2xl font-extrabold text-white tracking-wide">
+                  Holiday Gift Exchange QR
+                </span>
                 <span>🎁</span>
               </div>
-
-              <h3 className="mt-3 font-serif text-xl sm:text-2xl font-extrabold text-white tracking-wide">
-                Holiday Gift Exchange QR
-              </h3>
               <p className="mt-1 text-xs text-emerald-200/80">
                 Scan with mobile camera to open the Secret Santa gift portal
               </p>
@@ -1962,18 +1916,9 @@ export default function AdminDashboardPage() {
               {/* QR Image Container in Christmas Frame */}
               <div className="my-5 flex justify-center">
                 <div className="relative rounded-3xl border-4 border-amber-400/90 bg-white p-3.5 sm:p-4 shadow-[0_0_35px_rgba(220,38,38,0.4),0_0_15px_rgba(251,191,36,0.3)] ring-4 ring-red-600/30">
-                  {/* Decorative Holiday Corner Pins */}
-                  <div className="absolute -top-3 -left-3 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow-md border-2 border-white text-xs select-none">
-                    🎄
-                  </div>
-                  <div className="absolute -top-3 -right-3 flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 text-white shadow-md border-2 border-white text-xs select-none">
-                    ⭐
-                  </div>
-                  <div className="absolute -bottom-3 -left-3 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md border-2 border-white text-xs select-none">
-                    🎁
-                  </div>
-                  <div className="absolute -bottom-3 -right-3 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow-md border-2 border-white text-xs select-none">
-                    🔔
+                  {/* Luxury Christmas Gift Bow on Top */}
+                  <div className="absolute -top-4 inset-x-0 flex justify-center pointer-events-none">
+                    <span className="text-3xl filter drop-shadow">🎀</span>
                   </div>
 
                   {qrCodeDataUrl ? (
@@ -1990,8 +1935,8 @@ export default function AdminDashboardPage() {
                     </div>
                   )}
 
-                  <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-emerald-950/70">
-                    ✨ Secret Santa • Scan to Play ✨
+                  <div className="mt-2 text-[11px] font-bold uppercase tracking-wider text-emerald-950/80 font-serif">
+                    ✨ Secret Santa • Scan with Camera ✨
                   </div>
                 </div>
               </div>

@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `عذراً، هذا الجهاز مسجل لحساب ${deviceBinding.participantName} (Access denied. This device is registered to ${deviceBinding.participantName}).`,
+          error: `Access denied. This device is registered to ${deviceBinding.participantName}.`,
         },
         { status: 403 }
       );

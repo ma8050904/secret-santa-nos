@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionFromRequest, clearSessionCookie } from "@/lib/session";
-import { getEventState } from "@/lib/storage";
+import { getSessionFromRequest, getDeviceIdFromRequest, clearSessionCookie } from "@/lib/session";
+import { getEventState, getDeviceBinding } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,16 @@ export async function GET(req: NextRequest) {
     // If participant has no registered PIN, the session is invalidated
     if (!participant || !participant.pinHash) {
       const res = NextResponse.json({ authenticated: false });
+      clearSessionCookie(res);
+      return res;
+    }
+
+    // Authoritative Device-Binding Check:
+    // If the organizer reset device bindings, invalidate active sessions on this device immediately
+    const deviceId = getDeviceIdFromRequest(req);
+    const binding = await getDeviceBinding(deviceId);
+    if (!binding || binding.participantId !== session.participantId) {
+      const res = NextResponse.json({ authenticated: false, unbound: true });
       clearSessionCookie(res);
       return res;
     }

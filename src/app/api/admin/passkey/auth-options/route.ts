@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
       rpID,
       allowCredentials: passkeys.map((pk) => ({
         id: pk.id,
-        transports: pk.transports as any,
+        // Strictly internal platform authenticator (Mac Touch ID) - prevents cross-device QR code modal
+        transports: ["internal"] as any,
       })),
       userVerification: "required",
       timeout: 60000,

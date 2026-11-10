@@ -1059,7 +1059,7 @@ export async function bindDeviceToParticipant(
   if (existing && existing.participantId !== participantId) {
     return {
       success: false,
-      error: `هذا الجهاز مرتبط رسمياً بحساب ${existing.participantName} (This device is registered to ${existing.participantName}).`,
+      error: `This device is officially registered to ${existing.participantName}.`,
     };
   }
 

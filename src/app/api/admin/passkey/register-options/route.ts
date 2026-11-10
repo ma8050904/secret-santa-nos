@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { getAdminPasskeys } from "@/lib/storage";
-import { getWebAuthnRpDetails, verifyAdminRequest } from "@/lib/admin-auth";
+import { getWebAuthnRpDetails, verifyAdminRequest, verifyAdminPassword } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    // Only allow registering passkeys if authorized (or if zero passkeys currently exist for initial bootstrap)
     const existingPasskeys = await getAdminPasskeys();
     const isAuthed = await verifyAdminRequest(req);
 
-    if (existingPasskeys.length > 0 && !isAuthed) {
+    const authHeader = req.headers.get("x-admin-password") || req.headers.get("authorization");
+    let hasValidPassword = false;
+    if (authHeader) {
+      const token = authHeader.replace(/^Bearer\s+/i, "");
+      hasValidPassword = await verifyAdminPassword(token);
+    }
+
+    if (existingPasskeys.length > 0 && !isAuthed && !hasValidPassword) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized. Admin authentication required to add passkeys." },
+        { success: false, error: "Unauthorized. Admin authentication required to register passkeys." },
         { status: 401 }
       );
     }
