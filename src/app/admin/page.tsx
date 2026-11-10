@@ -198,7 +198,7 @@ export default function AdminDashboardPage() {
   const [registeredPasskeys, setRegisteredPasskeys] = useState<
     Array<{ id: string; label: string; createdAt: string; deviceType?: string }>
   >([]);
-  const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+  const [showPasswordFallback, setShowPasswordFallback] = useState(true);
   const [resetParticipantTarget, setResetParticipantTarget] = useState<AdminParticipant | null>(null);
   const [isResettingParticipant, setIsResettingParticipant] = useState(false);
 
