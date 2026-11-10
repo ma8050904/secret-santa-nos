@@ -100,9 +100,36 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
     setError(null);
     setStage("opening");
 
+    // If recipientName was already established from biometric/PIN verification, reveal immediately
+    if (recipientName) {
+      setTimeout(() => {
+        setStage("revealed");
+        triggerConfetti();
+        onRevealSuccess(participant.id);
+      }, 450);
+
+      // Persist reveal status asynchronously on server
+      fetch("/api/reveal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getDeviceHeaders(),
+        },
+        body: JSON.stringify({
+          participantId: participant.id,
+          pin: pin === "biometric" ? "" : pin,
+        }),
+      }).catch((err) => console.warn("Background reveal record notice:", err));
+      return;
+    }
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
       const res = await fetch("/api/reveal", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           ...getDeviceHeaders(),
@@ -113,6 +140,7 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         }),
       });
 
+      clearTimeout(timeoutId);
       const data = await res.json();
 
       if (!res.ok || !data.success) {
@@ -127,9 +155,9 @@ export const GiftBoxReveal: React.FC<GiftBoxRevealProps> = ({
         setStage("revealed");
         triggerConfetti();
         onRevealSuccess(participant.id);
-      }, 400);
+      }, 450);
     } catch {
-      setError("Connection error. Please try again.");
+      setError("Connection timed out. Please tap below to try again.");
       setStage("ready_to_open");
     }
   };

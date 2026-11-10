@@ -83,7 +83,9 @@ export async function POST(req: NextRequest) {
     resetRateLimit(rateLimitKey);
 
     const userAgent = req.headers.get("user-agent") || "";
-    await recordDeviceReveal(deviceId, participantId, { ip, userAgent });
+    recordDeviceReveal(deviceId, participantId, { ip, userAgent }).catch((err) =>
+      console.warn("Notice: background device reveal record:", err)
+    );
 
     return NextResponse.json({
       success: true,

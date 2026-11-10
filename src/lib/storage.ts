@@ -937,7 +937,7 @@ export async function registerParticipantBiometric(
       name: participant.name,
       isRevealed: runtime.isRevealed,
     },
-    recipientName: runtime.isRevealed ? originalRecipient : undefined,
+    recipientName: originalRecipient,
   };
 }
 
@@ -964,16 +964,14 @@ export async function authenticateParticipantBiometric(
   }
 
   let recipientName: string | undefined;
-  if (runtime.isRevealed) {
-    try {
-      recipientName = decryptRecipient(
-        participant.encryptedRecipient!,
-        participant.code,
-        masterState.masterSalt
-      );
-    } catch (err) {
-      console.error("Recipient decryption error:", err);
-    }
+  try {
+    recipientName = decryptRecipient(
+      participant.encryptedRecipient!,
+      participant.code,
+      masterState.masterSalt
+    );
+  } catch (err) {
+    console.error("Recipient decryption error:", err);
   }
 
   return {
