@@ -111,9 +111,16 @@ export default function AdminDashboardPage() {
 
   // Active Confirmation Modal state
   const [activeModal, setActiveModal] = useState<
-    "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES" | null
+    "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES" | "FULL_RESET" | null
   >(null);
   const [isActionSubmitting, setIsActionSubmitting] = useState(false);
+
+  // Custom password management state (Mac Keychain & Touch ID compatible)
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState("");
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Authenticate Admin
   const handleLogin = async (e: React.FormEvent) => {
@@ -177,8 +184,70 @@ export default function AdminDashboardPage() {
     }
   }, [isAuthenticated, fetchAdminData]);
 
+  // Admin Logout
+  const handleAdminLogout = async () => {
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
+    setIsAuthenticated(false);
+    setPassword("");
+    setState(null);
+  };
+
+  // Change Admin Master Password
+  const handleChangeAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordFeedback(null);
+
+    if (newAdminPassword.length < 6) {
+      setPasswordFeedback({ type: "error", text: "Password must be at least 6 characters long." });
+      return;
+    }
+
+    if (newAdminPassword !== confirmAdminPassword) {
+      setPasswordFeedback({ type: "error", text: "Passwords do not match." });
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const res = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({ newPassword: newAdminPassword.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setPasswordFeedback({ type: "error", text: data.error || "Failed to update password." });
+        return;
+      }
+
+      setPassword(newAdminPassword.trim());
+      setPasswordFeedback({
+        type: "success",
+        text: "Password updated successfully! macOS Keychain will offer to update Touch ID.",
+      });
+      setNewAdminPassword("");
+      setConfirmAdminPassword("");
+      setTimeout(() => {
+        setShowPasswordModal(false);
+        setPasswordFeedback(null);
+      }, 2000);
+    } catch {
+      setPasswordFeedback({ type: "error", text: "Network connection error." });
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
+
   // Execute Sensitive Action
-  const executeAction = async (actionType: "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES") => {
+  const executeAction = async (actionType: "FULL_REGENERATE" | "REROLL_SUBGROUP" | "RESET_DEVICES" | "FULL_RESET") => {
     setIsActionSubmitting(true);
     setActionSuccessMsg(null);
     setActionErrorMsg(null);
@@ -187,6 +256,7 @@ export default function AdminDashboardPage() {
     if (actionType === "FULL_REGENERATE") endpoint = "/api/admin/generate";
     else if (actionType === "REROLL_SUBGROUP") endpoint = "/api/admin/reroll-subgroup";
     else if (actionType === "RESET_DEVICES") endpoint = "/api/admin/reset-devices";
+    else if (actionType === "FULL_RESET") endpoint = "/api/admin/reset";
 
     try {
       const res = await fetch(endpoint, {
@@ -280,6 +350,16 @@ export default function AdminDashboardPage() {
             {isAuthenticated && (
               <>
                 <button
+                  onClick={() => {
+                    setPasswordFeedback(null);
+                    setShowPasswordModal(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#071d13] px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#0f3422] cursor-pointer"
+                >
+                  <Lock className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Change Password</span>
+                </button>
+                <button
                   onClick={fetchAdminData}
                   disabled={isRefreshing}
                   className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#071d13] px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-[#0f3422] disabled:opacity-50 cursor-pointer"
@@ -288,11 +368,11 @@ export default function AdminDashboardPage() {
                   <span>Refresh</span>
                 </button>
                 <button
-                  onClick={() => setIsAuthenticated(false)}
+                  onClick={handleAdminLogout}
                   className="flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-950/60 px-3 py-1.5 text-xs font-semibold text-red-200 transition-colors hover:bg-red-900/80 cursor-pointer"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  <span>Lock</span>
+                  <span>Logout</span>
                 </button>
               </>
             )}
@@ -302,7 +382,7 @@ export default function AdminDashboardPage() {
 
       <main className="relative z-20 mx-auto max-w-6xl px-4 py-8">
         {/* ===================================================================
-            LOGIN SCREEN
+            LOGIN SCREEN (With Apple Keychain & Touch ID autofill support)
            =================================================================== */}
         {!isAuthenticated && (
           <div className="mx-auto max-w-md py-12">
@@ -318,13 +398,27 @@ export default function AdminDashboardPage() {
                 Please enter the organizer master password to access the Control Center.
               </p>
 
-              <form onSubmit={handleLogin} className="mt-6 space-y-4">
+              <form method="POST" onSubmit={handleLogin} autoComplete="on" className="mt-6 space-y-4">
+                <input
+                  type="text"
+                  name="username"
+                  id="admin-username"
+                  autoComplete="username"
+                  defaultValue="Organizer"
+                  readOnly
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
                 <div>
-                  <label className="block text-xs font-medium text-amber-200 mb-1">
+                  <label htmlFor="admin-password" className="block text-xs font-medium text-amber-200 mb-1">
                     Organizer Master Password:
                   </label>
                   <input
+                    id="admin-password"
+                    name="password"
                     type="password"
+                    autoComplete="current-password"
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
@@ -335,9 +429,6 @@ export default function AdminDashboardPage() {
                     required
                     className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-3 text-sm text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                   />
-                  <p className="mt-1.5 text-[11px] text-emerald-300/60">
-                    Default: <code className="text-amber-300">SantaMagic2024!</code>
-                  </p>
                 </div>
 
                 {authError && (
@@ -487,8 +578,38 @@ export default function AdminDashboardPage() {
                 </h3>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Action 1: Regenerate Full Draw */}
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Action 1: Full Event Reset */}
+                <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-[#0a1e12] to-[#040f09] p-5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-serif text-base font-bold text-white">
+                        Full Event Reset
+                      </h4>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-950/80 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300 uppercase tracking-wider">
+                        Preserves Draw
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-200/90 leading-relaxed">
+                      Reset all participant PINs, reveal statuses, and device locks while keeping assignments 100% intact.
+                    </p>
+                    <p className="mt-2 text-[11px] text-emerald-300/60 leading-normal">
+                      Creates an automatic backup. Clears all registrations and unlocks all devices without re-drawing or altering pairings.
+                    </p>
+                  </div>
+
+                  <div className="mt-5 pt-3 border-t border-emerald-500/20 flex justify-end">
+                    <button
+                      onClick={() => setActiveModal("FULL_RESET")}
+                      className="flex items-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-700 hover:bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] cursor-pointer"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>Full Event Reset</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Action 2: Regenerate Full Draw */}
                 <div className="rounded-2xl border border-red-500/30 bg-gradient-to-b from-[#190a0d] to-[#0d0406] p-5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-3">
@@ -496,14 +617,14 @@ export default function AdminDashboardPage() {
                         Regenerate Full Draw
                       </h4>
                       <span className="inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-red-950/80 px-2.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider">
-                        Destructive action
+                        Re-draws all
                       </span>
                     </div>
                     <p className="text-xs text-red-200/90 leading-relaxed">
-                      Regenerate the draw for all participants while strictly preserving all current rules.
+                      Re-randomize assignments for all participants while strictly adhering to all rules.
                     </p>
                     <p className="mt-2 text-[11px] text-red-300/60 leading-normal">
-                      Creates an automatic backup. Regenerates assignments for all {state.totalParticipants} participants while preserving Subgroups 1 & 2 partitions, Ghazal ⇄ George, Zeina ⇎ Hamza, and Raghad ⇎ Mohammad constraints.
+                      Creates an automatic backup. Regenerates assignments for all {state.totalParticipants} participants with all mandatory constraints.
                     </p>
                   </div>
 
@@ -512,13 +633,13 @@ export default function AdminDashboardPage() {
                       onClick={() => setActiveModal("FULL_REGENERATE")}
                       className="flex items-center gap-2 rounded-xl border border-red-500/50 bg-red-900/80 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:bg-red-800 hover:scale-[1.02] cursor-pointer"
                     >
-                      <RotateCcw className="h-3.5 w-3.5" />
+                      <RefreshCw className="h-3.5 w-3.5" />
                       <span>Regenerate Full Draw</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Action 2: Reroll Subgroup */}
+                {/* Action 3: Reroll Subgroup */}
                 <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-b from-[#18150a] to-[#0d0b04] p-5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-3">
@@ -526,14 +647,14 @@ export default function AdminDashboardPage() {
                         Reroll Designated Subgroup
                       </h4>
                       <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-950/80 px-2.5 py-0.5 text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-                        Subgroup Re-randomization
+                        Subgroup Only
                       </span>
                     </div>
                     <p className="text-xs text-amber-200/90 leading-relaxed">
                       Reroll the designated 24-person group only, leaving the assignments of the other participants unchanged.
                     </p>
                     <p className="mt-2 text-[11px] text-amber-300/60 leading-normal">
-                      Creates an automatic backup. Rerolls the closed subgroup with all mandatory constraints (Ghazal ⇄ George, Zeina ⇎ Hamza, Raghad ⇎ Mohammad) while preserving the other assignments byte-for-byte.
+                      Creates an automatic backup. Rerolls the closed subgroup with all mandatory constraints while preserving the other assignments.
                     </p>
                   </div>
 
@@ -543,7 +664,7 @@ export default function AdminDashboardPage() {
                       className="flex items-center gap-2 rounded-xl border border-amber-500/50 bg-amber-600 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg transition-all hover:bg-amber-500 hover:scale-[1.02] cursor-pointer"
                     >
                       <Dices className="h-3.5 w-3.5" />
-                      <span>Reroll Designated Subgroup</span>
+                      <span>Reroll Subgroup</span>
                     </button>
                   </div>
                 </div>
@@ -1136,6 +1257,171 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
               )}
+
+              {/* MODAL 4: FULL EVENT RESET */}
+              {activeModal === "FULL_RESET" && (
+                <div>
+                  <div className="flex items-center gap-3 text-emerald-400 mb-3">
+                    <div className="p-3 rounded-2xl border border-emerald-500/40 bg-emerald-950/80">
+                      <RotateCcw className="h-6 w-6 text-emerald-300" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-lg font-bold text-white">
+                        Confirm Full Event Reset
+                      </h3>
+                      <p className="text-xs text-emerald-300/80">Clear PINs and device locks while keeping assignments 100% intact</p>
+                    </div>
+                  </div>
+
+                  <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4">
+                    <p>• <strong>Automatic Backup:</strong> An automated timestamped backup is created immediately before any changes.</p>
+                    <p>• <strong>Zero Data Loss:</strong> Secret Santa pairings and all rules (Maysoon ➔ Qais, Diana ➔ Mohammad, Ghazal ⇄ George, etc.) remain 100% untouched.</p>
+                    <p>• <strong>Fresh Start:</strong> Clears all registered participant PINs, resets reveals to 0, and unlinks all bound devices.</p>
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveModal(null)}
+                      disabled={isActionSubmitting}
+                      className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => executeAction("FULL_RESET")}
+                      disabled={isActionSubmitting}
+                      className="flex items-center gap-2 rounded-xl border border-emerald-400 bg-emerald-600 hover:bg-emerald-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+                    >
+                      {isActionSubmitting ? (
+                        <>
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          <span>Resetting event...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span>Confirm Full Event Reset</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================
+            CHANGE ORGANIZER PASSWORD MODAL (Apple Keychain & Touch ID Ready)
+           =================================================================== */}
+        {showPasswordModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
+              onClick={() => !isUpdatingPassword && setShowPasswordModal(false)}
+            />
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/40 bg-gradient-to-b from-[#0a2618] to-[#040f09] p-6 shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-amber-500/20">
+                <div className="flex items-center gap-2 text-amber-300">
+                  <Lock className="h-5 w-5" />
+                  <h3 className="font-serif text-lg font-bold text-white">Change Master Password</h3>
+                </div>
+                <button
+                  onClick={() => setShowPasswordModal(false)}
+                  disabled={isUpdatingPassword}
+                  className="rounded-lg p-1 text-emerald-300 hover:text-white transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form method="POST" onSubmit={handleChangeAdminPassword} autoComplete="on" className="mt-5 space-y-4">
+                <input
+                  type="text"
+                  name="username"
+                  id="admin-username-change"
+                  autoComplete="username"
+                  defaultValue="Organizer"
+                  readOnly
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+
+                <div>
+                  <label className="block text-xs font-medium text-amber-200 mb-1">
+                    New Master Password:
+                  </label>
+                  <input
+                    type="password"
+                    name="new-password"
+                    id="new-password"
+                    autoComplete="new-password"
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                    placeholder="Enter new password (min 6 characters)..."
+                    required
+                    autoFocus
+                    className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-2.5 text-sm text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-amber-200 mb-1">
+                    Confirm New Password:
+                  </label>
+                  <input
+                    type="password"
+                    name="confirm-password"
+                    id="confirm-password"
+                    autoComplete="new-password"
+                    value={confirmAdminPassword}
+                    onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                    placeholder="Confirm new password..."
+                    required
+                    className="w-full rounded-2xl border border-amber-500/40 bg-[#071d13] px-4 py-2.5 text-sm text-white placeholder-emerald-400/40 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                  />
+                </div>
+
+                {passwordFeedback && (
+                  <div
+                    className={`rounded-xl border p-3 text-xs ${
+                      passwordFeedback.type === "success"
+                        ? "border-emerald-400/50 bg-emerald-950/80 text-emerald-200"
+                        : "border-red-400/50 bg-red-950/80 text-red-200"
+                    }`}
+                  >
+                    {passwordFeedback.text}
+                  </div>
+                )}
+
+                <div className="pt-2 flex justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordModal(false)}
+                    disabled={isUpdatingPassword}
+                    className="rounded-xl border border-emerald-700/40 bg-emerald-950/70 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingPassword || !newAdminPassword || !confirmAdminPassword}
+                    className="flex items-center gap-1.5 rounded-xl border border-amber-400/50 bg-amber-500 hover:bg-amber-400 px-5 py-2 text-xs font-bold text-slate-950 shadow-md transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+                  >
+                    {isUpdatingPassword ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Updating...</span>
+                      </>
+                    ) : (
+                      <span>Save Password</span>
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

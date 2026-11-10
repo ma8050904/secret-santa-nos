@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, Suspense, useCallback } from "react";
-import { ArrowDown, Gift, RefreshCw, Lock, ShieldAlert, X } from "lucide-react";
+import React, { useEffect, useState, Suspense, useCallback, useRef } from "react";
+import { ArrowDown, Gift, RefreshCw, Lock, ShieldAlert, X, LogOut, CheckCircle2 } from "lucide-react";
 import { FestiveHeader } from "@/components/FestiveHeader";
 import { Snowfall } from "@/components/Snowfall";
 import { ParticipantGrid, ParticipantItem } from "@/components/ParticipantGrid";
@@ -9,7 +9,12 @@ import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
 import { SantaChatModal } from "@/components/SantaChatModal";
 import { PARTICIPANTS } from "@/lib/constants";
-import { getDeviceHeaders, getStoredBoundParticipant, setStoredBoundParticipant } from "@/lib/device";
+import {
+  getDeviceHeaders,
+  getStoredBoundParticipant,
+  setStoredBoundParticipant,
+  clearStoredBoundParticipant,
+} from "@/lib/device";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
 const DEFAULT_PARTICIPANTS: ParticipantItem[] = PARTICIPANTS.map((p) => ({
@@ -82,13 +87,21 @@ function SecretSantaApp() {
   const [boundDeviceUser, setBoundDeviceUser] = useState<{ id: string; name: string } | null>(null);
   const [selectedForAuth, setSelectedForAuth] = useState<ParticipantItem | null>(null);
 
+  // Synchronous ref to prevent stale closures when clicking any card
+  const lockedUserRef = useRef<{ id: string; name: string } | null>(null);
+
   // Synchronously seed bound device user from storage on mount
   useEffect(() => {
     const stored = getStoredBoundParticipant();
     if (stored) {
       setBoundDeviceUser(stored);
+      lockedUserRef.current = stored;
     }
   }, []);
+
+  useEffect(() => {
+    lockedUserRef.current = activeParticipant || boundDeviceUser;
+  }, [activeParticipant, boundDeviceUser]);
 
   // Authenticated Reveal state
   const [activePin, setActivePin] = useState<string | null>(null);
@@ -214,10 +227,45 @@ function SecretSantaApp() {
     }
   };
 
+  // Unlink device & log out
+  const handleLogoutAndUnbind = useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: getDeviceHeaders(),
+      });
+    } catch {
+      // non-blocking
+    }
+
+    clearStoredBoundParticipant();
+    try {
+      window.localStorage.removeItem("santa_device_v7_clean_id");
+    } catch {
+      // ignore
+    }
+
+    setActiveParticipant(null);
+    setBoundDeviceUser(null);
+    lockedUserRef.current = null;
+    setActivePin(null);
+    setIsCurrentlyRevealed(false);
+    setRevealedRecipient(undefined);
+    setSelectedForAuth(null);
+
+    showToast({
+      title: "تم تسجيل الخروج",
+      message: "تم فك ربط هذا الجهاز بنجاح. يمكنك الآن الدخول بأي حساب تريده.",
+      type: "info",
+    });
+
+    loadParticipants(true);
+  }, [loadParticipants, showToast]);
+
   // Participant card clicked (Session-Locked & Device-Locked immediately on click)
   const handleSelectParticipant = useCallback(
     (p: ParticipantItem) => {
-      const lockedUser = activeParticipant || boundDeviceUser;
+      const lockedUser = lockedUserRef.current || activeParticipant || boundDeviceUser;
 
       if (lockedUser) {
         if (lockedUser.id !== p.id) {
@@ -348,6 +396,62 @@ function SecretSantaApp() {
           <span className="text-sm">✨ 🎄 🎁 ✨</span>
           <div className="h-px flex-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
         </div>
+
+        {/* Bound Participant Banner & Unbind / Logout Action */}
+        {(activeParticipant || boundDeviceUser) && (
+          <div className="mx-auto max-w-xl px-4 mb-6">
+            <div className="relative overflow-hidden rounded-2xl border border-amber-400/40 bg-gradient-to-r from-[#0d2a1a] via-[#143d26] to-[#0d2a1a] p-4 shadow-xl backdrop-blur-md">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-400/50 bg-amber-500/20 text-amber-300">
+                    <Lock className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium text-emerald-200/80">
+                      هذا الجهاز مرتبط رسمياً بحساب:
+                    </p>
+                    <p className="font-serif text-sm font-bold text-amber-200 truncate">
+                      {(activeParticipant || boundDeviceUser)?.name}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    onClick={() => {
+                      const user = activeParticipant || boundDeviceUser;
+                      if (!user) return;
+                      if (activeParticipant && activePin) {
+                        setShowRevealModal(true);
+                      } else {
+                        const target =
+                          participants.find((item) => item.id === user.id) || {
+                            id: user.id,
+                            name: user.name,
+                            isRevealed: false,
+                          };
+                        setSelectedForAuth(target);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 rounded-xl border border-amber-400/60 bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-1.5 text-xs font-bold shadow transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    <Gift className="h-3.5 w-3.5" />
+                    <span>افتح هديتك</span>
+                  </button>
+
+                  <button
+                    onClick={handleLogoutAndUnbind}
+                    className="flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-red-950/70 hover:bg-red-900/90 text-red-200 px-3 py-1.5 text-xs font-semibold shadow transition-colors cursor-pointer"
+                    title="فك ربط الجهاز وتسجيل الخروج"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span>تسجيل خروج وفك الربط</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* =====================================================================
             PARTICIPANT SELECTION SECTION

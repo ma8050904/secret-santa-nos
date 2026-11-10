@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { Search, Gift, Check, Sparkles, RefreshCw } from "lucide-react";
 
 export interface ParticipantItem {
@@ -131,6 +131,15 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
 
+  const onSelectRef = useRef(onSelectParticipant);
+  useEffect(() => {
+    onSelectRef.current = onSelectParticipant;
+  }, [onSelectParticipant]);
+
+  const handleCardSelect = useCallback((p: ParticipantItem) => {
+    onSelectRef.current(p);
+  }, []);
+
   const safeList = Array.isArray(participants) ? participants : [];
 
   // Sort once per list reference change
@@ -234,7 +243,7 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
               key={p.id}
               participant={p}
               isSelected={selectedParticipantId === p.id}
-              onSelect={onSelectParticipant}
+              onSelect={handleCardSelect}
             />
           ))}
         </div>

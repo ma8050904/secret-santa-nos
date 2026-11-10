@@ -4,7 +4,7 @@ import { regenerateFullDraw } from "@/lib/storage";
 
 export async function POST(req: NextRequest) {
   try {
-    if (!verifyAdminRequest(req)) {
+    if (!(await verifyAdminRequest(req))) {
       return NextResponse.json({ success: false, error: "Unauthorized. Admin credentials required." }, { status: 401 });
     }
 

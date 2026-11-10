@@ -49,6 +49,9 @@ export interface EventState {
   generatedAt: string | null;
   masterSalt: string;
   participants: StoredParticipant[];
+  deviceResetVersion?: number;
+  adminPasswordHash?: string;
+  adminPasswordSalt?: string;
 }
 
 export interface ParticipantRuntimeState {
@@ -77,6 +80,7 @@ export interface DeviceBindingRecord {
   summary?: string;
   hasRevealed?: boolean;
   revealedAt?: string | null;
+  resetVersion?: number;
 }
 
 // Storage path resolution: prioritize local project dir in development, fallback to /tmp in serverless
@@ -951,9 +955,22 @@ export async function getDeviceBinding(
   if (!deviceId || typeof deviceId !== "string") return null;
   const cleanId = deviceId.trim().toLowerCase();
 
+  let resetVersion = 1;
+  try {
+    const state = await getEventState();
+    resetVersion = state.deviceResetVersion || 1;
+  } catch {
+    // fallback
+  }
+
   // Check in-memory cache
   if (deviceBindingCache.has(cleanId)) {
-    return deviceBindingCache.get(cleanId)!;
+    const cached = deviceBindingCache.get(cleanId)!;
+    if (cached.resetVersion && cached.resetVersion < resetVersion) {
+      deviceBindingCache.delete(cleanId);
+      return null;
+    }
+    return cached;
   }
 
   // 1. Check Vercel Private Blob (if not in isolated test mode)
@@ -968,6 +985,9 @@ export async function getDeviceBinding(
       if (res && res.stream) {
         const text = await new Response(res.stream).text();
         const parsed: DeviceBindingRecord = JSON.parse(text);
+        if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
+          return null;
+        }
         deviceBindingCache.set(cleanId, parsed);
         return parsed;
       }
@@ -982,6 +1002,9 @@ export async function getDeviceBinding(
     if (fs.existsSync(localFile)) {
       const data = fs.readFileSync(localFile, "utf-8");
       const parsed: DeviceBindingRecord = JSON.parse(data);
+      if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
+        return null;
+      }
       deviceBindingCache.set(cleanId, parsed);
       return parsed;
     }
@@ -1020,6 +1043,14 @@ export async function bindDeviceToParticipant(
   const hasRevealed = Boolean(existing?.hasRevealed || revealedParticipantIds.has(participantId));
   const revealedAt = existing?.revealedAt || null;
 
+  let resetVersion = 1;
+  try {
+    const state = await getEventState();
+    resetVersion = state.deviceResetVersion || 1;
+  } catch {
+    // fallback
+  }
+
   const record: DeviceBindingRecord = {
     deviceId: cleanId,
     participantId,
@@ -1034,6 +1065,7 @@ export async function bindDeviceToParticipant(
     summary: parsed.summary !== "Unknown Device" ? parsed.summary : existing?.summary || "Unknown Device",
     hasRevealed,
     revealedAt,
+    resetVersion,
   };
 
   // Update in-memory cache
@@ -1141,6 +1173,39 @@ export async function clearDeviceBindingsForParticipant(
   }
 
   return { success: true, clearedCount };
+}
+
+/**
+ * Clears a specific device binding (e.g., when a user clicks "Unbind / Logout").
+ */
+export async function clearDeviceBinding(deviceId: string): Promise<{ success: boolean }> {
+  if (!deviceId || typeof deviceId !== "string") return { success: true };
+  const cleanId = deviceId.trim().toLowerCase();
+  const binding = deviceBindingCache.get(cleanId);
+  deviceBindingCache.delete(cleanId);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      const urls: string[] = [`${KNOWN_BLOB_BASE}/v7/devices/${cleanId}.json`];
+      if (binding?.participantId) {
+        urls.push(`${KNOWN_BLOB_BASE}/v7/participant_devices/${binding.participantId}/${cleanId}`);
+      }
+      await del(urls, { token: process.env.BLOB_READ_WRITE_TOKEN });
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const localFile = path.join(getLocalDeviceDir(), `${cleanId}.json`);
+    if (fs.existsSync(localFile)) {
+      fs.unlinkSync(localFile);
+    }
+  } catch {
+    // ignore
+  }
+
+  return { success: true };
 }
 
 let auditLogsCache: AdminAuditLogEntry[] | null = null;
@@ -1428,6 +1493,14 @@ export async function resetAllDeviceBindings(
     // ignore
   }
 
+  try {
+    const state = await getEventState(true);
+    state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
+    await saveEventState(state);
+  } catch {
+    // ignore
+  }
+
   await recordAdminAuditLog({
     action: "RESET_ALL_DEVICES",
     actionLabel: "Reset All Device Bindings",
@@ -1440,6 +1513,126 @@ export async function resetAllDeviceBindings(
     success: true,
     clearedCount: initialCount,
     message: `Successfully reset ${initialCount} device binding(s). All participants can now log in freely from their devices without losing PINs or draw assignments.`,
+  };
+}
+
+/**
+ * Full Event Reset: Clears all participant PINs, reveal statuses, and device bindings,
+ * advancing the round version (invalidating old cookies/sessions) while preserving all 56
+ * Secret Santa assignments byte-for-byte with their constraints.
+ */
+export async function fullEventReset(
+  clientIp: string = "unknown"
+): Promise<{ success: boolean; message: string; version: number }> {
+  const state = await getEventState(true);
+
+  // 1. Create timestamped backup
+  const timestamp = Date.now();
+  const backupBlobKey = `secret-santa-event.backup-pre-full-reset-${timestamp}.json`;
+  const backupSerialized = JSON.stringify(state, null, 2);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await put(backupBlobKey, backupSerialized, {
+        access: "private",
+        addRandomSuffix: false,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch (err) {
+      console.warn("Notice: backup in Blob:", err);
+    }
+  }
+
+  // 2. Clear all participants' PINs and reveal status
+  state.participants.forEach((p) => {
+    p.pinHash = null;
+    p.pinSalt = null;
+    p.encryptedWithPin = false;
+    p.isRevealed = false;
+    p.revealedAt = null;
+  });
+
+  // 3. Increment version to invalidate all active session tokens and device bindings
+  state.version = (state.version || 7) + 1;
+  state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
+
+  // Clear in-memory caches
+  runtimeParticipantCache.clear();
+  revealedParticipantIds.clear();
+  registeredParticipantIds.clear();
+  deviceBindingCache.clear();
+
+  // 4. Clear all device bindings from Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    try {
+      for (const prefix of ["v7/devices/", "v7/participant_devices/"]) {
+        const listRes = await list({
+          prefix,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+        if (listRes.blobs.length > 0) {
+          await del(
+            listRes.blobs.map((b) => b.url),
+            { token: process.env.BLOB_READ_WRITE_TOKEN }
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Notice: reset devices in Blob:", err);
+    }
+  }
+
+  try {
+    const dir = getLocalDeviceDir();
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith(".json")) {
+          fs.unlinkSync(path.join(dir, f));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  await saveEventState(state);
+
+  await recordAdminAuditLog({
+    action: "RESET_ALL_DEVICES",
+    actionLabel: "Full Event Reset",
+    ip: clientIp,
+    status: "SUCCESS",
+    details: `Full Event Reset executed. All 56 participant PINs, reveal states, and device bindings were cleared. Assignments remain 100% intact. Advanced to Round ${state.version}.`,
+  });
+
+  return {
+    success: true,
+    message: `Full Event Reset completed. All participant PINs, reveal records, and device locks have been completely reset. Event is now at Round ${state.version}.`,
+    version: state.version,
+  };
+}
+
+/**
+ * Updates the Organizer master password with salted scrypt hashing.
+ */
+export async function updateAdminPassword(
+  newPassword: string
+): Promise<{ success: boolean; message: string }> {
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error("Password must be at least 6 characters long.");
+  }
+  const state = await getEventState(true);
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(newPassword, salt, 32).toString("hex");
+
+  state.adminPasswordHash = hash;
+  state.adminPasswordSalt = salt;
+  await saveEventState(state);
+
+  return {
+    success: true,
+    message: "Organizer password updated successfully.",
   };
 }
 

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { APP_CONFIG } from "@/lib/constants";
-import { secureCompare } from "@/lib/crypto";
+import { verifyAdminPassword } from "@/lib/admin-auth";
 import { recordAdminAuditLog } from "@/lib/storage";
 
 export async function POST(req: NextRequest) {
@@ -17,7 +16,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Password is required" }, { status: 400 });
     }
 
-    if (!secureCompare(password, APP_CONFIG.ADMIN_DEFAULT_PASSWORD)) {
+    const isValid = await verifyAdminPassword(password);
+    if (!isValid) {
       await recordAdminAuditLog({
         action: "ADMIN_LOGIN_FAILED",
         actionLabel: "Failed Admin Login Attempt",
@@ -42,8 +42,8 @@ export async function POST(req: NextRequest) {
       message: "Organizer authenticated successfully",
     });
 
-    // Set secure HTTP-only cookie
-    response.cookies.set("santa_admin_token", APP_CONFIG.ADMIN_DEFAULT_PASSWORD, {
+    // Set secure HTTP-only cookie containing the authenticated password
+    response.cookies.set("santa_admin_token", password, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
