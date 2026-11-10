@@ -148,7 +148,7 @@ function SecretSantaApp() {
     try {
       if (!isBackground) setIsLoading(true);
       setError(null);
-      const res = await fetch("/api/participants", { cache: "no-store" });
+      const res = await fetch(`/api/participants?t=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) {
         throw new Error("Unable to connect. Please check your connection.");
       }
@@ -169,7 +169,7 @@ function SecretSantaApp() {
   // Check existing session
   const checkSession = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/session", { cache: "no-store" });
+      const res = await fetch(`/api/auth/session?t=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
       if (res.ok && data.authenticated && data.participant) {
         setActiveParticipant(data.participant);
@@ -199,7 +199,7 @@ function SecretSantaApp() {
   // Check existing device binding
   const checkDeviceStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/device-status", {
+      const res = await fetch(`/api/auth/device-status?t=${Date.now()}`, {
         headers: getDeviceHeaders(),
         cache: "no-store",
       });

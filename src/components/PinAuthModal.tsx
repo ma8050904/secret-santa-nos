@@ -31,9 +31,69 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
   // Biometric / Device Screen Lock states
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
-  const [isBiometricLoading, setIsBiometricLoading] = useState(false);
-  const [showPinFallback, setShowPinFallback] = useState(false);
+  const [isBiometricLoading, setIsBiometricLoading] = useState(() => {
+    return typeof window !== "undefined" && Boolean(window.PublicKeyCredential);
+  });
+  const [showPinFallback, setShowPinFallback] = useState(() => {
+    return typeof window !== "undefined" && !Boolean(window.PublicKeyCredential);
+  });
   const autoTriggeredRef = useRef(false);
+
+  // Helper for biometric registration
+  const handleBiometricRegister = useCallback(async () => {
+    try {
+      const optRes = await fetch("/api/auth/biometric/register-options", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getDeviceHeaders(),
+        },
+        body: JSON.stringify({ participantId: participant.id }),
+      });
+
+      const optData = await optRes.json();
+      if (!optRes.ok || !optData.success) {
+        setShowPinFallback(true);
+        setIsBiometricLoading(false);
+        return;
+      }
+
+      const registration = await startRegistration({ optionsJSON: optData.options });
+
+      const verifyRes = await fetch("/api/auth/biometric/register-verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getDeviceHeaders(),
+        },
+        body: JSON.stringify({
+          participantId: participant.id,
+          response: registration,
+        }),
+      });
+
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok || !verifyData.success) {
+        setError(verifyData.error || "Biometric registration failed.");
+        setShowPinFallback(true);
+        setIsBiometricLoading(false);
+        return;
+      }
+
+      setIsBiometricLoading(false);
+      onSuccess({
+        participant: verifyData.participant,
+        pin: "biometric",
+        isRevealed: Boolean(verifyData.participant?.isRevealed),
+        recipientName: verifyData.recipientName,
+        isNewRegistration: true,
+      });
+    } catch (err: unknown) {
+      console.log("Biometric auto-prompt fallback:", err);
+      setShowPinFallback(true);
+      setIsBiometricLoading(false);
+    }
+  }, [participant, onSuccess]);
 
   // Biometric Authentication (Face ID / Touch ID / Native Device Passcode)
   const handleBiometricAuth = useCallback(async () => {
@@ -54,6 +114,9 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
         const optData = await optRes.json();
         if (!optRes.ok || !optData.success) {
+          if (optData && optData.noPasskey) {
+            return handleBiometricRegister();
+          }
           setShowPinFallback(true);
           setIsBiometricLoading(false);
           return;
@@ -91,52 +154,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         });
       } else {
         // Register new credential (Face ID / Touch ID / Screen Lock Passcode)
-        const optRes = await fetch("/api/auth/biometric/register-options", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...getDeviceHeaders(),
-          },
-          body: JSON.stringify({ participantId: participant.id }),
-        });
-
-        const optData = await optRes.json();
-        if (!optRes.ok || !optData.success) {
-          setShowPinFallback(true);
-          setIsBiometricLoading(false);
-          return;
-        }
-
-        const registration = await startRegistration({ optionsJSON: optData.options });
-
-        const verifyRes = await fetch("/api/auth/biometric/register-verify", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...getDeviceHeaders(),
-          },
-          body: JSON.stringify({
-            participantId: participant.id,
-            response: registration,
-          }),
-        });
-
-        const verifyData = await verifyRes.json();
-        if (!verifyRes.ok || !verifyData.success) {
-          setError(verifyData.error || "Biometric registration failed.");
-          setShowPinFallback(true);
-          setIsBiometricLoading(false);
-          return;
-        }
-
-        setIsBiometricLoading(false);
-        onSuccess({
-          participant: verifyData.participant,
-          pin: "biometric",
-          isRevealed: Boolean(verifyData.participant?.isRevealed),
-          recipientName: verifyData.recipientName,
-          isNewRegistration: true,
-        });
+        await handleBiometricRegister();
       }
     } catch (err: unknown) {
       console.log("Biometric auto-prompt fallback:", err);
@@ -144,7 +162,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       setShowPinFallback(true);
       setIsBiometricLoading(false);
     }
-  }, [participant, onSuccess]);
+  }, [participant, onSuccess, handleBiometricRegister]);
 
   // Auto-detect biometric availability and immediately fire Face ID / Touch ID / Passcode prompt
   useEffect(() => {
@@ -155,6 +173,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         setIsBiometricSupported(Boolean(supported));
         if (!supported) {
           // No device lock / platform authenticator found -> auto-switch to PIN entry
+          setIsBiometricLoading(false);
           setShowPinFallback(true);
         } else if (!autoTriggeredRef.current) {
           autoTriggeredRef.current = true;
@@ -165,6 +184,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       .catch(() => {
         if (!isMounted) return;
         setIsBiometricSupported(false);
+        setIsBiometricLoading(false);
         setShowPinFallback(true);
       });
 

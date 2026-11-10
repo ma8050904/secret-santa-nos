@@ -225,14 +225,24 @@ async function syncMarkers(force = false): Promise<void> {
         list({ prefix: "v7/registered/", token: process.env.BLOB_READ_WRITE_TOKEN }),
       ]);
 
+      const freshRevealed = new Set<string>();
       for (const b of revealedList.blobs) {
         const id = b.pathname.replace("v7/revealed/", "");
-        if (id) revealedParticipantIds.add(id);
+        if (id) freshRevealed.add(id);
       }
+
+      const freshRegistered = new Set<string>();
       for (const b of registeredList.blobs) {
         const id = b.pathname.replace("v7/registered/", "");
-        if (id) registeredParticipantIds.add(id);
+        if (id) freshRegistered.add(id);
       }
+
+      revealedParticipantIds.clear();
+      for (const id of freshRevealed) revealedParticipantIds.add(id);
+
+      registeredParticipantIds.clear();
+      for (const id of freshRegistered) registeredParticipantIds.add(id);
+
       lastMarkersSyncTimestamp = now;
       return;
     } catch (err) {
@@ -246,14 +256,24 @@ async function syncMarkers(force = false): Promise<void> {
     const revealedDir = path.join(localDir, "v7_revealed");
     const registeredDir = path.join(localDir, "v7_registered");
 
+    const freshRevealed = new Set<string>();
     if (fs.existsSync(revealedDir)) {
       const files = fs.readdirSync(revealedDir);
-      for (const f of files) revealedParticipantIds.add(f);
+      for (const f of files) freshRevealed.add(f);
     }
+
+    const freshRegistered = new Set<string>();
     if (fs.existsSync(registeredDir)) {
       const files = fs.readdirSync(registeredDir);
-      for (const f of files) registeredParticipantIds.add(f);
+      for (const f of files) freshRegistered.add(f);
     }
+
+    revealedParticipantIds.clear();
+    for (const id of freshRevealed) revealedParticipantIds.add(id);
+
+    registeredParticipantIds.clear();
+    for (const id of freshRegistered) registeredParticipantIds.add(id);
+
     lastMarkersSyncTimestamp = now;
   } catch {
     // ignore
@@ -297,7 +317,7 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
         const parsed: EventState = JSON.parse(text);
 
         // Merge active markers into parsed state
-        await syncMarkers();
+        await syncMarkers(forceFresh);
         for (const p of parsed.participants) {
           if (revealedParticipantIds.has(p.id)) {
             p.isRevealed = true;
@@ -326,7 +346,7 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
       const data = await fs.promises.readFile(/*turbopackIgnore: true*/ filePath, "utf-8");
       const parsed: EventState = JSON.parse(data);
 
-      await syncMarkers();
+      await syncMarkers(forceFresh);
       for (const p of parsed.participants) {
         if (revealedParticipantIds.has(p.id)) {
           p.isRevealed = true;
@@ -1815,6 +1835,7 @@ export async function fullEventReset(
   state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
   // Clear in-memory caches
+  inMemoryStateCache = null;
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
@@ -2292,19 +2313,28 @@ export async function regenerateFullDraw(
   state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
 
   // Clear caches
+  inMemoryStateCache = null;
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
   deviceBindingCache.clear();
+  lastMarkersSyncTimestamp = 0;
 
-  // Clear local device directory
+  // Clear local device & marker directories
   try {
+    const localDir = path.dirname(getStorageFilePath());
+    for (const sub of ["v7_revealed", "v7_registered", "v7_participants", "v7_devices"]) {
+      const targetDir = path.join(/*turbopackIgnore: true*/ localDir, sub);
+      if (fs.existsSync(/*turbopackIgnore: true*/ targetDir)) {
+        fs.rmSync(/*turbopackIgnore: true*/ targetDir, { recursive: true, force: true });
+      }
+    }
     const dir = getLocalDeviceDir();
-    if (fs.existsSync(dir)) {
-      const files = fs.readdirSync(dir);
+    if (fs.existsSync(/*turbopackIgnore: true*/ dir)) {
+      const files = fs.readdirSync(/*turbopackIgnore: true*/ dir);
       for (const f of files) {
         if (f.endsWith(".json")) {
-          fs.unlinkSync(path.join(dir, f));
+          fs.unlinkSync(/*turbopackIgnore: true*/ path.join(dir, f));
         }
       }
     }
@@ -2317,12 +2347,23 @@ export async function regenerateFullDraw(
   // Clean runtime blobs (devices, participant records, but preserve audit logs)
   if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
     try {
-      const vList = await list({ prefix: "v7/", token: process.env.BLOB_READ_WRITE_TOKEN });
-      const urlsToDelete = vList.blobs
-        .filter((b) => !b.pathname.includes("admin_audit_logs"))
-        .map((b) => b.url);
-      if (urlsToDelete.length > 0) {
-        await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      let hasMore = true;
+      let cursor: string | undefined = undefined;
+      while (hasMore) {
+        const vList: any = await list({
+          prefix: "v7/",
+          cursor,
+          limit: 1000,
+          token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+        const urlsToDelete = vList.blobs
+          .filter((b: any) => !b.pathname.includes("admin_audit_logs"))
+          .map((b: any) => b.url);
+        if (urlsToDelete.length > 0) {
+          await del(urlsToDelete, { token: process.env.BLOB_READ_WRITE_TOKEN });
+        }
+        hasMore = Boolean(vList.hasMore);
+        cursor = vList.cursor;
       }
     } catch (err) {
       console.warn("Notice: cleaning runtime markers in Blob:", err);
@@ -2463,6 +2504,7 @@ export async function setDrawMode(
   }
 
   // Clear in-memory caches
+  inMemoryStateCache = null;
   runtimeParticipantCache.clear();
   revealedParticipantIds.clear();
   registeredParticipantIds.clear();
