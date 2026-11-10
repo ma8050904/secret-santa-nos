@@ -1012,7 +1012,7 @@ export async function bindDeviceToParticipant(
   if (existing && existing.participantId !== participantId) {
     return {
       success: false,
-      error: "This device is registered to another participant account. Accessing multiple accounts from the same device is not permitted.",
+      error: `هذا الجهاز مرتبط رسمياً بحساب ${existing.participantName} (This device is registered to ${existing.participantName}).`,
     };
   }
 

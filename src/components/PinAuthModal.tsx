@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { ArrowRight, KeyRound, Eye, EyeOff } from "lucide-react";
 import { ParticipantItem } from "./ParticipantGrid";
-import { getDeviceHeaders } from "@/lib/device";
+import { getDeviceHeaders, setStoredBoundParticipant } from "@/lib/device";
 
 interface PinAuthModalProps {
   participant: ParticipantItem;
@@ -60,6 +60,12 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       const data = await res.json();
 
       if (!res.ok || !data.success) {
+        if (data.boundParticipantId && data.boundParticipantName) {
+          setStoredBoundParticipant({
+            id: data.boundParticipantId,
+            name: data.boundParticipantName,
+          });
+        }
         setError(data.error || "Authentication failed.");
         if (res.status === 429) {
           setLockoutSec(60);

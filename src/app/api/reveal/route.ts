@@ -43,7 +43,10 @@ export async function POST(req: NextRequest) {
     const deviceBinding = await getDeviceBinding(deviceId);
     if (deviceBinding && deviceBinding.participantId !== participantId) {
       return NextResponse.json(
-        { success: false, error: "Access denied. This device is registered to another participant account." },
+        {
+          success: false,
+          error: `عذراً، هذا الجهاز مسجل لحساب ${deviceBinding.participantName} (Access denied. This device is registered to ${deviceBinding.participantName}).`,
+        },
         { status: 403 }
       );
     }

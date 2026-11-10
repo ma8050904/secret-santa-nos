@@ -85,3 +85,45 @@ export function getDeviceHeaders(): Record<string, string> {
     "x-device-id": deviceId,
   };
 }
+
+const BOUND_PARTICIPANT_KEY = "santa_bound_participant_v7";
+
+export function getStoredBoundParticipant(): { id: string; name: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(BOUND_PARTICIPANT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.id === "string" && typeof parsed.name === "string") {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function setStoredBoundParticipant(participant: { id: string; name: string } | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (!participant) {
+      window.localStorage.removeItem(BOUND_PARTICIPANT_KEY);
+    } else {
+      window.localStorage.setItem(
+        BOUND_PARTICIPANT_KEY,
+        JSON.stringify({ id: participant.id, name: participant.name })
+      );
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function clearStoredBoundParticipant(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(BOUND_PARTICIPANT_KEY);
+  } catch {
+    // ignore
+  }
+}

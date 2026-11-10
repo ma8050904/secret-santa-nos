@@ -9,7 +9,7 @@ import { PinAuthModal } from "@/components/PinAuthModal";
 import { GiftBoxReveal } from "@/components/GiftBoxReveal";
 import { SantaChatModal } from "@/components/SantaChatModal";
 import { PARTICIPANTS } from "@/lib/constants";
-import { getDeviceHeaders } from "@/lib/device";
+import { getDeviceHeaders, getStoredBoundParticipant, setStoredBoundParticipant } from "@/lib/device";
 
 // Default participant list pre-populated to guarantee immediate rendering and resilience
 const DEFAULT_PARTICIPANTS: ParticipantItem[] = PARTICIPANTS.map((p) => ({
@@ -79,7 +79,16 @@ function SecretSantaApp() {
 
   // Active Session & Modal States
   const [activeParticipant, setActiveParticipant] = useState<ParticipantItem | null>(null);
+  const [boundDeviceUser, setBoundDeviceUser] = useState<{ id: string; name: string } | null>(null);
   const [selectedForAuth, setSelectedForAuth] = useState<ParticipantItem | null>(null);
+
+  // Synchronously seed bound device user from storage on mount
+  useEffect(() => {
+    const stored = getStoredBoundParticipant();
+    if (stored) {
+      setBoundDeviceUser(stored);
+    }
+  }, []);
 
   // Authenticated Reveal state
   const [activePin, setActivePin] = useState<string | null>(null);
@@ -151,6 +160,8 @@ function SecretSantaApp() {
       const data = await res.json();
       if (res.ok && data.authenticated && data.participant) {
         setActiveParticipant(data.participant);
+        setBoundDeviceUser({ id: data.participant.id, name: data.participant.name });
+        setStoredBoundParticipant({ id: data.participant.id, name: data.participant.name });
       } else {
         setActiveParticipant(null);
         setActivePin(null);
@@ -174,12 +185,16 @@ function SecretSantaApp() {
       });
       const data = await res.json();
       if (res.ok && data.bound && data.participantId && data.participantName) {
-        const boundParticipant: ParticipantItem = {
+        const boundParticipant = {
           id: data.participantId,
           name: data.participantName,
-          isRevealed: false,
         };
-        setActiveParticipant((prev) => prev || boundParticipant);
+        setBoundDeviceUser(boundParticipant);
+        setStoredBoundParticipant(boundParticipant);
+      } else if (res.ok && !data.bound) {
+        // Device explicitly unbound by admin
+        setBoundDeviceUser(null);
+        setStoredBoundParticipant(null);
       }
     } catch {
       // Non-blocking
@@ -199,11 +214,13 @@ function SecretSantaApp() {
     }
   };
 
-  // Participant card clicked (Session-Locked & Device-Locked to active participant once authenticated)
+  // Participant card clicked (Session-Locked & Device-Locked immediately on click)
   const handleSelectParticipant = useCallback(
     (p: ParticipantItem) => {
-      if (activeParticipant) {
-        if (activeParticipant.id !== p.id) {
+      const lockedUser = activeParticipant || boundDeviceUser;
+
+      if (lockedUser) {
+        if (lockedUser.id !== p.id) {
           if (typeof window !== "undefined" && "vibrate" in navigator) {
             try {
               navigator.vibrate([40, 60, 40]);
@@ -213,30 +230,38 @@ function SecretSantaApp() {
           }
 
           showToast({
-            title: "Device Locked to Your Name",
-            message: `This device is bound to ${activeParticipant.name}. To preserve the secrecy of the draw, each device can only be used by one person.`,
+            title: `هذا الجهاز مسجل باسم ${lockedUser.name}`,
+            message: `عذراً، هذا الجهاز مرتبط رسمياً بحساب ${lockedUser.name}. لحفظ سرية القرعة ومنع كشف أسماء الآخرين، لا يمكنك الدخول أو فتح هدية أي شخص آخر من هذا الجهاز.`,
             type: "warning",
-            actionLabel: `Open ${activeParticipant.name}'s Gift`,
+            actionLabel: `🎁 افتح هدية ${lockedUser.name}`,
             onAction: () => {
-              if (activePin) {
+              if (activeParticipant && activePin) {
                 setShowRevealModal(true);
               } else {
-                setSelectedForAuth(activeParticipant);
+                const target =
+                  participants.find((item) => item.id === lockedUser.id) || {
+                    id: lockedUser.id,
+                    name: lockedUser.name,
+                    isRevealed: false,
+                  };
+                setSelectedForAuth(target);
               }
             },
           });
           return;
         }
-        if (activePin) {
+
+        if (activeParticipant && activePin) {
           setShowRevealModal(true);
         } else {
-          setSelectedForAuth(activeParticipant);
+          setSelectedForAuth(p);
         }
         return;
       }
+
       setSelectedForAuth(p);
     },
-    [activeParticipant, activePin, showToast]
+    [activeParticipant, boundDeviceUser, activePin, participants, showToast]
   );
 
   // PIN verification success
@@ -249,6 +274,8 @@ function SecretSantaApp() {
     }) => {
       setSelectedForAuth(null);
       setActiveParticipant(data.participant);
+      setBoundDeviceUser({ id: data.participant.id, name: data.participant.name });
+      setStoredBoundParticipant({ id: data.participant.id, name: data.participant.name });
       setActivePin(data.pin);
       setIsCurrentlyRevealed(data.isRevealed);
       setRevealedRecipient(data.recipientName);
@@ -419,7 +446,7 @@ function SecretSantaApp() {
                       onClick={() => setToastNotification(null)}
                       className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-amber-300/80 hover:text-white transition-colors cursor-pointer"
                     >
-                      Dismiss
+                      إغلاق
                     </button>
                   </div>
                 )}

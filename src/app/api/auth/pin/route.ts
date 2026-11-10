@@ -47,7 +47,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "This device is registered to another participant account. Accessing multiple accounts from the same device is not permitted.",
+          error: `هذا الجهاز مرتبط رسمياً بحساب ${existingDeviceBinding.participantName} (This device is registered to ${existingDeviceBinding.participantName}). لا يمكن الدخول إلى حسابات أخرى من نفس الجهاز.`,
+          boundParticipantName: existingDeviceBinding.participantName,
+          boundParticipantId: existingDeviceBinding.participantId,
         },
         { status: 403 }
       );
