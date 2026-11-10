@@ -18,6 +18,7 @@ import {
   generateSubgroup20Pairs,
   validateConstrainedSecretSantaDraw,
   generateSecretSantaDerangement,
+  generateDistinctDerangement,
   validateDerangement,
   SUBGROUP_20_ID_SET,
   SUBGROUP_20_IDS,
@@ -2343,8 +2344,27 @@ export async function regenerateFullDraw(
 
   // 2. Generate draw according to active mode (free or constrained)
   const isFree = state.drawMode === "free";
+
+  // Build previous assignments map to prevent duplicate consecutive recipients on regenerate
+  const previousAssignmentsMap: Record<string, string> = {};
+  if (state.participants && state.masterSalt) {
+    for (const p of state.participants) {
+      if (p.encryptedRecipient && p.code) {
+        try {
+          const recName = decryptRecipient(p.encryptedRecipient, p.code, state.masterSalt);
+          const recP = PARTICIPANTS.find((x) => x.name === recName);
+          if (recP) {
+            previousAssignmentsMap[p.id] = recP.id;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
   const pairs = isFree
-    ? generateSecretSantaDerangement(PARTICIPANTS)
+    ? generateDistinctDerangement(PARTICIPANTS, previousAssignmentsMap)
     : generateConstrainedSecretSantaDraw(PARTICIPANTS);
 
   const validation = isFree

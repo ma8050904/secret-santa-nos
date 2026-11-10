@@ -267,7 +267,7 @@ export function generateSecretSantaDerangement(
   const list = [...participants];
 
   for (let i = n - 1; i > 0; i--) {
-    const j = crypto.randomInt(0, i);
+    const j = crypto.randomInt(0, i + 1);
     const temp = list[i];
     list[i] = list[j];
     list[j] = temp;
@@ -412,7 +412,7 @@ function generateDerangementCyclePairs(participants: readonly ParticipantItem[])
 
   const list = [...participants];
   for (let i = n - 1; i > 0; i--) {
-    const j = crypto.randomInt(0, i);
+    const j = crypto.randomInt(0, i + 1);
     const temp = list[i];
     list[i] = list[j];
     list[j] = temp;
