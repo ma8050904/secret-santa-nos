@@ -29,6 +29,7 @@ export function getWebAuthnRpDetails(req: NextRequest): { rpID: string; origin: 
     rawHostname.endsWith(".vercel.app") ||
     rawHostname.endsWith(".workers.dev") ||
     rawHostname.endsWith(".pages.dev") ||
+    rawHostname.endsWith(".netlify.app") ||
     rawHostname === "localhost" ||
     rawHostname === "127.0.0.1" ||
     Boolean(process.env.APP_DOMAIN && rawHostname === process.env.APP_DOMAIN.toLowerCase());
