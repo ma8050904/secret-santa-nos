@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { Search, Gift, Check, Sparkles, RefreshCw } from "lucide-react";
+import { Search, Gift, Check, Sparkles, RefreshCw, Lock } from "lucide-react";
 
 export interface ParticipantItem {
   id: string;
@@ -9,6 +9,8 @@ export interface ParticipantItem {
   isRevealed: boolean;
   hasRegistered?: boolean;
   hasPasskey?: boolean;
+  isClaimed?: boolean;
+  claimMethod?: "passkey" | "pin" | "none";
 }
 
 interface ParticipantGridProps {
@@ -17,21 +19,26 @@ interface ParticipantGridProps {
   error: string | null;
   onSelectParticipant: (participant: ParticipantItem) => void;
   selectedParticipantId: string | null;
+  boundParticipantId?: string | null;
   onRetry?: () => void;
 }
 
 interface ParticipantCardProps {
   participant: ParticipantItem;
   isSelected: boolean;
+  isBoundToThisUser?: boolean;
+  isLockedOut?: boolean;
   onSelect: (p: ParticipantItem) => void;
 }
 
 /**
  * Isolated, memoized participant card to eliminate unnecessary re-renders across all 56 cards.
- * Only the clicked card and the previously selected card re-render on selection.
+ * Implements Section 3 Single-Profile UI Lockdown:
+ * - If device is bound to this participant: Highlighted with gold/emerald ring.
+ * - If device is bound to another participant: Visually locked (opacity-40, lock icon, non-interactive visual tell).
  */
 const ParticipantCard: React.FC<ParticipantCardProps> = React.memo(
-  ({ participant: p, isSelected, onSelect }) => {
+  ({ participant: p, isSelected, isBoundToThisUser, isLockedOut, onSelect }) => {
     const initials = useMemo(() => {
       const cleanWords = (p.name || "")
         .replace(/[^\p{L}\s]/gu, "")
@@ -55,40 +62,66 @@ const ParticipantCard: React.FC<ParticipantCardProps> = React.memo(
         onClick={handleClick}
         type="button"
         style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
-        className={`christmas-glass-card group relative flex items-center justify-between overflow-hidden rounded-2xl p-3.5 text-left cursor-pointer select-none active:scale-[0.98] transition-transform duration-100 ${
-          isSelected
-            ? "border-amber-400 bg-gradient-to-r from-red-950/90 to-emerald-950/90 shadow-[0_0_20px_rgba(212,175,55,0.4)] ring-2 ring-amber-400/80"
-            : "hover:border-amber-400/60"
+        className={`christmas-glass-card group relative flex items-center justify-between overflow-hidden rounded-2xl p-3.5 text-left select-none transition-transform duration-100 ${
+          isLockedOut
+            ? "opacity-40 cursor-not-allowed filter grayscale-[25%] border-slate-800/40 bg-[#05150d]/80 hover:border-red-500/30"
+            : isBoundToThisUser
+            ? "border-amber-400 bg-gradient-to-r from-amber-950/80 to-emerald-950/90 shadow-[0_0_25px_rgba(212,175,55,0.4)] ring-2 ring-amber-400/90 cursor-pointer active:scale-[0.98]"
+            : isSelected
+            ? "border-amber-400 bg-gradient-to-r from-red-950/90 to-emerald-950/90 shadow-[0_0_20px_rgba(212,175,55,0.4)] ring-2 ring-amber-400/80 cursor-pointer active:scale-[0.98]"
+            : "hover:border-amber-400/60 cursor-pointer active:scale-[0.98]"
         }`}
       >
         {/* Subtle festive shimmer */}
-        <div className="pointer-events-none absolute top-0 right-0 -mr-6 -mt-6 h-12 w-12 rounded-full bg-amber-400/10 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+        {!isLockedOut && (
+          <div className="pointer-events-none absolute top-0 right-0 -mr-6 -mt-6 h-12 w-12 rounded-full bg-amber-400/10 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+        )}
 
         <div className="flex items-center gap-3 min-w-0">
           {/* Monogram Badge */}
           <div
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border font-bold text-xs tracking-wider shadow-sm transition-transform duration-150 ${
-              isSelected
+              isLockedOut
+                ? "border-slate-700/40 bg-slate-900/60 text-slate-400"
+                : isBoundToThisUser || isSelected
                 ? "border-amber-300 bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black shadow-[0_0_12px_rgba(212,175,55,0.6)]"
                 : p.isRevealed
                 ? "border-emerald-500/40 bg-emerald-950/80 text-emerald-200"
                 : "border-amber-500/30 bg-gradient-to-br from-red-900/60 to-red-950/80 text-amber-200"
             }`}
           >
-            {initials}
+            {isLockedOut ? <Lock className="h-4 w-4 text-slate-400" /> : initials}
           </div>
 
           {/* Name & Status */}
           <div className="min-w-0 flex-1">
             <p
               className={`truncate text-sm font-semibold tracking-wide transition-colors duration-100 ${
-                isSelected ? "text-amber-200" : "text-white group-hover:text-amber-200"
+                isLockedOut
+                  ? "text-slate-400"
+                  : isBoundToThisUser || isSelected
+                  ? "text-amber-200"
+                  : "text-white group-hover:text-amber-200"
               }`}
             >
               {p.name}
             </p>
             <div className="mt-0.5 flex items-center gap-1.5">
-              {p.isRevealed ? (
+              {isLockedOut ? (
+                <>
+                  <Lock className="h-3 w-3 text-amber-500/60 shrink-0" />
+                  <span className="text-[11px] font-medium text-amber-300/60">
+                    Locked
+                  </span>
+                </>
+              ) : isBoundToThisUser ? (
+                <>
+                  <Sparkles className="h-3 w-3 text-amber-300 shrink-0" />
+                  <span className="text-[11px] font-bold text-amber-300">
+                    Your Profile
+                  </span>
+                </>
+              ) : p.isRevealed ? (
                 <>
                   <Check className="h-3 w-3 text-emerald-400 shrink-0" />
                   <span className="text-[11px] font-medium text-emerald-300/90">
@@ -108,8 +141,16 @@ const ParticipantCard: React.FC<ParticipantCardProps> = React.memo(
         </div>
 
         {/* Right Arrow / Action Indicator */}
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-500/20 bg-[#051a0f]/60 text-amber-400 transition-colors duration-150 group-hover:border-amber-400 group-hover:bg-amber-400/20">
-          <Gift className="h-4 w-4" />
+        <div
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-colors duration-150 ${
+            isLockedOut
+              ? "border-slate-800 bg-slate-900/60 text-slate-500"
+              : isBoundToThisUser
+              ? "border-amber-400 bg-amber-400/20 text-amber-300"
+              : "border-amber-500/20 bg-[#051a0f]/60 text-amber-400 group-hover:border-amber-400 group-hover:bg-amber-400/20"
+          }`}
+        >
+          {isLockedOut ? <Lock className="h-3.5 w-3.5" /> : <Gift className="h-4 w-4" />}
         </div>
       </button>
     );
@@ -118,7 +159,9 @@ const ParticipantCard: React.FC<ParticipantCardProps> = React.memo(
     prev.participant.id === next.participant.id &&
     prev.participant.name === next.participant.name &&
     prev.participant.isRevealed === next.participant.isRevealed &&
-    prev.isSelected === next.isSelected
+    prev.isSelected === next.isSelected &&
+    prev.isBoundToThisUser === next.isBoundToThisUser &&
+    prev.isLockedOut === next.isLockedOut
 );
 
 ParticipantCard.displayName = "ParticipantCard";
@@ -129,6 +172,7 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
   error,
   onSelectParticipant,
   selectedParticipantId,
+  boundParticipantId,
   onRetry,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -240,14 +284,20 @@ const ParticipantGridComponent: React.FC<ParticipantGridProps> = ({
       {/* Participants Grid */}
       {filteredParticipants.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-          {filteredParticipants.map((p) => (
-            <ParticipantCard
-              key={p.id}
-              participant={p}
-              isSelected={selectedParticipantId === p.id}
-              onSelect={handleCardSelect}
-            />
-          ))}
+          {filteredParticipants.map((p) => {
+            const isBoundToThisUser = Boolean(boundParticipantId && boundParticipantId === p.id);
+            const isLockedOut = Boolean(boundParticipantId && boundParticipantId !== p.id);
+            return (
+              <ParticipantCard
+                key={p.id}
+                participant={p}
+                isSelected={selectedParticipantId === p.id}
+                isBoundToThisUser={isBoundToThisUser}
+                isLockedOut={isLockedOut}
+                onSelect={handleCardSelect}
+              />
+            );
+          })}
         </div>
       )}
     </section>

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revealRecipientWithPin, revealRecipientWithBiometric, getDeviceOrHardwareBinding, recordDeviceReveal } from "@/lib/storage";
-import { getSessionFromRequest, getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
+import {
+  getSessionFromRequest,
+  getDeviceIdFromRequest,
+  getHardwareFingerprintFromRequest,
+  getBoundParticipantFromRequest,
+  setBoundParticipantCookie,
+  setSessionCookie,
+} from "@/lib/session";
 import { checkDistributedRateLimit, resetDistributedRateLimit } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
@@ -40,7 +47,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authoritative Device-Level and Hardware Binding Check
+    // 1. Signed Cookie Binding Check (Layer 2)
+    const boundParticipantId = getBoundParticipantFromRequest(req);
+    if (boundParticipantId && boundParticipantId.toLowerCase() !== participantId.toLowerCase()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Access denied. This device is permanently bound to another participant.`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Authoritative Device-Level and Hardware Binding Check (Layer 1)
     // Works across Normal, Private, and Incognito browsing windows
     const deviceBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (deviceBinding && deviceBinding.participantId !== participantId) {
@@ -53,7 +72,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Verify session lock: bound strictly to authenticated participant
+    // 3. Verify session lock: bound strictly to authenticated participant
     const session = getSessionFromRequest(req);
     if (session && session.participantId !== participantId) {
       return NextResponse.json(
@@ -93,11 +112,16 @@ export async function POST(req: NextRequest) {
       console.warn("Notice: background device reveal record:", err)
     );
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       recipientName: result.recipientName,
       isFirstReveal: result.isFirstReveal,
     });
+
+    setSessionCookie(response, participantId, deviceId);
+    setBoundParticipantCookie(response, participantId);
+
+    return response;
   } catch (err: unknown) {
     console.error("Reveal API error:", err);
     return NextResponse.json(

@@ -417,23 +417,14 @@ export async function getPostgresDeviceOrHardwareBinding(
     }
 
     // 2. Check by Physical Hardware Fingerprint
-    // Apple iOS devices share identical screen/WebGL hardware profiles across all users of the same iPhone model.
-    // To prevent false-positive lockouts between different students owning identical phone models,
-    // we match against device_id when present, or hardware_fingerprint when querying directly.
+    // Matches across Private/Incognito browsing on the same physical hardware
     if (cleanHwFp && cleanHwFp.length > 5) {
-      const hwRows = cleanDeviceId
-        ? await sql`
-            SELECT participant_id, participant_name, device_id, hardware_fingerprint
-            FROM hardware_bindings
-            WHERE hardware_fingerprint = ${cleanHwFp} AND device_id = ${cleanDeviceId} AND reset_version >= ${resetVersion}
-            LIMIT 1;
-          `
-        : await sql`
-            SELECT participant_id, participant_name, device_id, hardware_fingerprint
-            FROM hardware_bindings
-            WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
-            LIMIT 1;
-          `;
+      const hwRows = await sql`
+        SELECT participant_id, participant_name, device_id, hardware_fingerprint
+        FROM hardware_bindings
+        WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
+        LIMIT 1;
+      `;
       if (hwRows && hwRows.length > 0) {
         return {
           participantId: String(hwRows[0].participant_id),
@@ -539,7 +530,37 @@ export async function getPostgresEventState(): Promise<EventState | null> {
   try {
     const rows = await sql`SELECT value FROM event_meta WHERE key = 'master_event_state' LIMIT 1;`;
     if (rows && rows.length > 0 && rows[0].value) {
-      return (typeof rows[0].value === "string" ? JSON.parse(rows[0].value) : rows[0].value) as EventState;
+      const state = (typeof rows[0].value === "string" ? JSON.parse(rows[0].value) : rows[0].value) as EventState;
+      // Real-time synchronization with individual participant records in event_participants table
+      try {
+        const participantRows = await sql`
+          SELECT id, is_revealed, pin_hash, pin_salt, encrypted_recipient, passkey_credential_id, passkey_public_key, passkey_counter
+          FROM event_participants;
+        `;
+        if (participantRows && participantRows.length > 0) {
+          const map = new Map<string, any>();
+          for (const r of participantRows) {
+            map.set(String(r.id), r);
+          }
+          for (const p of state.participants) {
+            const live = map.get(p.id);
+            if (live) {
+              p.isRevealed = Boolean(live.is_revealed);
+              if (live.pin_hash) p.pinHash = live.pin_hash;
+              if (live.pin_salt) p.pinSalt = live.pin_salt;
+              if (live.encrypted_recipient) p.encryptedRecipient = live.encrypted_recipient;
+              if (live.passkey_credential_id) p.passkeyCredentialId = live.passkey_credential_id;
+              if (live.passkey_public_key) p.passkeyPublicKey = live.passkey_public_key;
+              if (live.passkey_counter !== null && live.passkey_counter !== undefined) {
+                p.passkeyCounter = Number(live.passkey_counter);
+              }
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn("Notice: Live participant merge in getPostgresEventState:", syncErr);
+      }
+      return state;
     }
   } catch (err) {
     console.error("Database error reading event state from PostgreSQL:", err);
@@ -692,6 +713,8 @@ export async function getPostgresParticipantState(participantId: string): Promis
     `;
     if (rows && rows.length > 0) {
       const r = rows[0];
+      const isClaimed = Boolean(r.pin_hash || r.passkey_credential_id);
+      const claimMethod = r.passkey_credential_id ? "passkey" : r.pin_hash ? "pin" : "none";
       return {
         participantId: r.id,
         name: r.name,
@@ -705,6 +728,8 @@ export async function getPostgresParticipantState(participantId: string): Promis
         passkeyPublicKey: r.passkey_public_key || null,
         passkeyCounter: Number(r.passkey_counter || 0),
         passkeyRegisteredAt: r.passkey_registered_at ? String(r.passkey_registered_at) : null,
+        isClaimed,
+        claimMethod,
       };
     }
   } catch (err) {

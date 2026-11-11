@@ -964,7 +964,10 @@ export async function authenticateOrRegisterPin(
   const existingRuntime = await getParticipantRuntimeState(participantId);
 
   // CASE 1: Participant has ALREADY established a PIN
-  if (existingRuntime && existingRuntime.pinHash && existingRuntime.pinSalt) {
+  if (existingRuntime && existingRuntime.pinHash) {
+    if (!existingRuntime.pinSalt) {
+      return { success: false, error: "Account security setup error. Please contact the organizer." };
+    }
     const isValid = verifyPin(pin, existingRuntime.pinHash, existingRuntime.pinSalt);
     if (!isValid) {
       return { success: false, error: "Incorrect PIN. Please try again." };
@@ -1030,6 +1033,14 @@ export async function authenticateOrRegisterPin(
   }
 
   // CASE 2: Participant is establishing their PIN for the FIRST TIME
+  // Section 1.1: If participant is already claimed via Passkey or PIN, new PIN creation is prohibited
+  if (existingRuntime?.passkeyCredentialId || existingRuntime?.pinHash) {
+    return {
+      success: false,
+      error: "This participant profile has already been claimed and locked. Overwriting PIN or registration is strictly prohibited.",
+    };
+  }
+
   if (pin.length < 4) {
     return { success: false, error: "PIN must be at least 4 digits or characters." };
   }
@@ -1152,6 +1163,8 @@ export async function revealRecipientWithPin(
 export async function getParticipantBiometricStatus(participantId: string): Promise<{
   hasPasskey: boolean;
   hasPin: boolean;
+  isClaimed: boolean;
+  claimMethod: "passkey" | "pin" | "none";
   isRevealed: boolean;
   passkeyCredentialId?: string | null;
   passkeyPublicKey?: string | null;
@@ -1167,10 +1180,16 @@ export async function getParticipantBiometricStatus(participantId: string): Prom
   const rawPubKey = (runtime?.passkeyPublicKey || p?.passkeyPublicKey || "").trim();
   const validPubKey = rawPubKey.length > 0 && validCredId ? rawPubKey : null;
   const counter = Number(runtime?.passkeyCounter ?? p?.passkeyCounter ?? 0);
+  const hasPasskey = Boolean(validCredId);
+  const hasPin = Boolean(runtime?.pinHash || p?.pinHash);
+  const isClaimed = hasPasskey || hasPin;
+  const claimMethod = hasPasskey ? ("passkey" as const) : hasPin ? ("pin" as const) : ("none" as const);
 
   return {
-    hasPasskey: Boolean(validCredId),
-    hasPin: Boolean(runtime?.pinHash || p?.pinHash),
+    hasPasskey,
+    hasPin,
+    isClaimed,
+    claimMethod,
     isRevealed: Boolean(runtime?.isRevealed || p?.isRevealed),
     passkeyCredentialId: validCredId,
     passkeyPublicKey: validPubKey,
@@ -1200,14 +1219,14 @@ export async function registerParticipantBiometric(
     return { success: false, error: "Participant not found." };
   }
 
-  // Prevent duplicate registration or unauthorized overwrite of an existing valid passkey
+  // Section 1.1: An already CLAIMED participant profile can NEVER register a new Passkey or overwrite its PIN
   const existingRuntime = await getParticipantRuntimeState(participantId);
   const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
   const existingCredId = (existingRuntime?.passkeyCredentialId || participant.passkeyCredentialId || "").trim();
-  if (existingCredId && BASE64URL_REGEX.test(existingCredId) && existingCredId !== credential.id) {
+  if (existingCredId || existingRuntime?.pinHash) {
     return {
       success: false,
-      error: "A biometric passkey is already registered for this participant. Duplicate registration is blocked.",
+      error: "This participant profile has already been claimed and locked. Duplicate registration is strictly prohibited.",
     };
   }
 

@@ -7,6 +7,10 @@ const LEGACY_SESSION_COOKIE = "santa_participant_session";
 const DEVICE_COOKIE_NAME = "santa_device_v7_clean";
 const LEGACY_DEVICE_COOKIE = "santa_device_id";
 
+// Section 1.2: Signed HttpOnly Cookie ss_bound_participant
+export const BOUND_COOKIE_NAME = "ss_bound_participant";
+export const CHALLENGE_COOKIE_NAME = "santa_biometric_challenge";
+
 const SESSION_SECRET =
   process.env.SESSION_SECRET || "SantaMagic2024_Round7_FinalClean_v7_Production_Strict";
 
@@ -21,6 +25,109 @@ export function generateServerDeviceId(): string {
     return crypto.randomUUID();
   }
   return crypto.randomBytes(16).toString("hex");
+}
+
+/**
+ * Computes an HMAC-SHA256 signature for a participant ID to guarantee cookie integrity.
+ */
+export function signBoundParticipant(participantId: string): string {
+  return crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(`bound:${participantId.trim().toLowerCase()}`)
+    .digest("base64url");
+}
+
+/**
+ * Verifies the HMAC-SHA256 signature on an ss_bound_participant cookie.
+ * Returns the validated participantId, or null if invalid or tampered.
+ */
+export function verifyBoundParticipant(cookieValue: string | null | undefined): string | null {
+  if (!cookieValue || typeof cookieValue !== "string") return null;
+  const parts = cookieValue.split(".");
+  if (parts.length !== 2) return null;
+  const [participantId, sig] = parts;
+  if (!participantId || !sig) return null;
+  const expectedSig = signBoundParticipant(participantId);
+  try {
+    const isMatch = crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig));
+    return isMatch ? participantId.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sets the signed HttpOnly ss_bound_participant cookie on an outgoing response.
+ * Max-Age = 31536000 (1 year), SameSite = Lax, Secure.
+ */
+export function setBoundParticipantCookie(
+  response: { cookies: { set: (name: string, value: string, options: any) => void } },
+  participantId: string
+) {
+  const cleanId = participantId.trim().toLowerCase();
+  const signature = signBoundParticipant(cleanId);
+  response.cookies.set(BOUND_COOKIE_NAME, `${cleanId}.${signature}`, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 31536000, // 1 year
+  });
+}
+
+/**
+ * Extracts and cryptographically verifies the bound participant ID from the request's cookies.
+ */
+export function getBoundParticipantFromRequest(req: NextRequest): string | null {
+  const cookie = req.cookies.get(BOUND_COOKIE_NAME)?.value;
+  return verifyBoundParticipant(cookie);
+}
+
+/**
+ * Sets an HMAC-SHA256 signed WebAuthn challenge cookie tied specifically to this participantId and mode.
+ */
+export function setBiometricChallengeCookie(
+  response: { cookies: { set: (name: string, value: string, options: any) => void } },
+  mode: "register" | "authenticate",
+  challenge: string,
+  participantId: string
+) {
+  const cleanId = participantId.trim().toLowerCase();
+  const payload = `${mode}:${challenge}:${cleanId}`;
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  response.cookies.set(CHALLENGE_COOKIE_NAME, `${payload}:${sig}`, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 300, // 5 minutes
+  });
+}
+
+/**
+ * Verifies that the WebAuthn challenge belongs to this participant, mode, and has a valid HMAC signature.
+ * Returns the raw challenge string or null if invalid or expired.
+ */
+export function verifyBiometricChallengeCookie(
+  req: NextRequest,
+  expectedMode: "register" | "authenticate",
+  participantId: string
+): string | null {
+  const val = req.cookies.get(CHALLENGE_COOKIE_NAME)?.value;
+  if (!val) return null;
+  const parts = val.split(":");
+  if (parts.length !== 4) return null;
+  const [mode, challenge, pId, sig] = parts;
+  const cleanId = participantId.trim().toLowerCase();
+  if (mode !== expectedMode || pId.toLowerCase() !== cleanId) return null;
+  const expectedPayload = `${mode}:${challenge}:${cleanId}`;
+  const expectedSig = crypto.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("base64url");
+  try {
+    const isMatch = crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig));
+    return isMatch ? challenge : null;
+  } catch {
+    return null;
+  }
 }
 
 export function setSessionCookie(
@@ -76,6 +183,8 @@ export function clearSessionCookie(response: {
     LEGACY_SESSION_COOKIE,
     DEVICE_COOKIE_NAME,
     LEGACY_DEVICE_COOKIE,
+    BOUND_COOKIE_NAME,
+    CHALLENGE_COOKIE_NAME,
   ]) {
     response.cookies.set(name, "", {
       httpOnly: true,

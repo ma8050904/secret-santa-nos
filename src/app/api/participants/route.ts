@@ -14,13 +14,21 @@ export async function GET() {
   try {
     const state = await getEventState(true);
 
-    const publicParticipants = state.participants.map((p) => ({
-      id: p.id,
-      name: p.name,
-      isRevealed: Boolean(p.isRevealed),
-      hasRegistered: Boolean(p.pinHash || p.passkeyCredentialId),
-      hasPasskey: Boolean(p.passkeyCredentialId),
-    }));
+    const publicParticipants = state.participants.map((p) => {
+      const hasPasskey = Boolean(p.passkeyCredentialId);
+      const hasPin = Boolean(p.pinHash);
+      const isClaimed = hasPasskey || hasPin;
+      const claimMethod = hasPasskey ? ("passkey" as const) : hasPin ? ("pin" as const) : ("none" as const);
+      return {
+        id: p.id,
+        name: p.name,
+        isRevealed: Boolean(p.isRevealed),
+        hasRegistered: isClaimed,
+        hasPasskey,
+        isClaimed,
+        claimMethod,
+      };
+    });
 
     return NextResponse.json(
       {

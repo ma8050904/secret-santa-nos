@@ -15,10 +15,14 @@ import { getWebAuthnRpDetails } from "@/lib/admin-auth";
 import {
   setSessionCookie,
   setDeviceCookie,
+  setBoundParticipantCookie,
   getSessionFromRequest,
   getDeviceIdFromRequest,
   getHardwareFingerprintFromRequest,
+  getBoundParticipantFromRequest,
+  verifyBiometricChallengeCookie,
 } from "@/lib/session";
+import { getPasskeyCredentialOwner } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +48,19 @@ export async function handleBiometricVerify(
     const hwFp = getHardwareFingerprintFromRequest(req);
     const { rpID, origin } = getWebAuthnRpDetails(req);
 
-    // Authoritative Device & Hardware Binding Check
+    // 1. Signed Cookie Binding Check (Layer 2)
+    const boundParticipantId = getBoundParticipantFromRequest(req);
+    if (boundParticipantId && boundParticipantId.toLowerCase() !== participantId.toLowerCase()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This device is permanently bound to another participant. Accessing other accounts is not permitted.`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Authoritative Database Device & Hardware Binding Check (Layer 1)
     const existingBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (existingBinding && existingBinding.participantId !== participantId) {
       return NextResponse.json(
@@ -56,7 +72,7 @@ export async function handleBiometricVerify(
       );
     }
 
-    // Session Lock: Prevent switching participant identity within an existing authenticated session
+    // 3. Session Lock: Prevent switching participant identity within an existing authenticated session
     const existingSession = getSessionFromRequest(req);
     if (existingSession && existingSession.participantId !== participantId) {
       return NextResponse.json(
@@ -68,8 +84,10 @@ export async function handleBiometricVerify(
       );
     }
 
-    // Read unified or legacy challenge cookie
+    // Read signed challenge cookie or legacy challenge cookie
+    const signedChallenge = verifyBiometricChallengeCookie(req, effectiveMode, participantId);
     const rawChallengeCookie =
+      signedChallenge ||
       req.cookies.get("santa_biometric_challenge")?.value ||
       (effectiveMode === "register"
         ? req.cookies.get("santa_participant_reg_challenge")?.value
@@ -91,16 +109,30 @@ export async function handleBiometricVerify(
       // ----------------------------------------------------
       // REGISTRATION VERIFICATION
       // ----------------------------------------------------
-      // Block duplicate registration if participant already has a registered passkey
+      // Section 1.1: Block registration if participant is ALREADY CLAIMED
       const existingStatus = await getParticipantBiometricStatus(participantId);
-      if (existingStatus.hasPasskey) {
+      if (existingStatus.isClaimed) {
         return NextResponse.json(
           {
             success: false,
-            error: "A biometric passkey is already registered for this participant. Duplicate registration is blocked.",
+            error: "This participant profile has already been claimed and locked. WebAuthn registration is strictly prohibited.",
           },
           { status: 403 }
         );
+      }
+
+      // Check if credential ID already belongs to another participant
+      if (clientResponse.id) {
+        const owner = await getPasskeyCredentialOwner(clientResponse.id);
+        if (owner && owner.participantId !== participantId) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Cross-participant credential reuse blocked: this passkey is already registered to ${owner.participantName}.`,
+            },
+            { status: 403 }
+          );
+        }
       }
 
       const verification = await verifyRegistrationResponse({
@@ -166,9 +198,10 @@ export async function handleBiometricVerify(
         maxAge: 0,
       });
 
-      // Set session & device cookies
+      // Set session, device & bound participant cookies (Layer 2)
       setSessionCookie(response, participantId, deviceId);
       setDeviceCookie(response, deviceId);
+      setBoundParticipantCookie(response, participantId);
 
       return response;
     } else {
@@ -250,9 +283,10 @@ export async function handleBiometricVerify(
         maxAge: 0,
       });
 
-      // Set session & device cookies
+      // Set session, device & bound participant cookies (Layer 2)
       setSessionCookie(response, participantId, deviceId);
       setDeviceCookie(response, deviceId);
+      setBoundParticipantCookie(response, participantId);
 
       return response;
     }

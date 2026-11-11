@@ -4,9 +4,11 @@ import { checkDistributedRateLimit, resetDistributedRateLimit } from "@/lib/db";
 import {
   setSessionCookie,
   setDeviceCookie,
+  setBoundParticipantCookie,
   getSessionFromRequest,
   getDeviceIdFromRequest,
   getHardwareFingerprintFromRequest,
+  getBoundParticipantFromRequest,
 } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
@@ -51,7 +53,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authoritative Device-Level and Hardware Binding Check
+    // 1. Signed Cookie Binding Check (Layer 2)
+    const boundParticipantId = getBoundParticipantFromRequest(req);
+    if (boundParticipantId && boundParticipantId.toLowerCase() !== participantId.toLowerCase()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This device is permanently bound to another participant. Accessing other accounts is not permitted.`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Authoritative Device-Level and Hardware Binding Check (Layer 1)
     // Works across Normal, Private, and Incognito browsing windows
     const existingDeviceBinding = await getDeviceOrHardwareBinding(deviceId, hwFp);
     if (existingDeviceBinding && existingDeviceBinding.participantId !== participantId) {
@@ -66,7 +80,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Prevent switching participant identity within an existing authenticated session (Session Lock)
+    // 3. Prevent switching participant identity within an existing authenticated session (Session Lock)
     const existingSession = getSessionFromRequest(req);
     if (existingSession && existingSession.participantId !== participantId) {
       return NextResponse.json(
@@ -81,13 +95,16 @@ export async function POST(req: NextRequest) {
     const result = await authenticateOrRegisterPin(participantId, pin);
 
     if (!result.success) {
+      const isClaimedOrLocked =
+        result.error?.toLowerCase().includes("already been claimed") ||
+        result.error?.toLowerCase().includes("prohibited");
       return NextResponse.json(
         {
           success: false,
           error: result.error || "Authentication failed",
           remainingAttempts: rateCheck.remainingAttempts,
         },
-        { status: 401 }
+        { status: isClaimedOrLocked ? 403 : 401 }
       );
     }
 
@@ -111,9 +128,10 @@ export async function POST(req: NextRequest) {
       deviceId,
     });
 
-    // Establish secure session cookie & persistent device cookie bound to this device
+    // Establish secure session cookie, persistent device cookie & bound participant cookie
     setSessionCookie(response, participantId, deviceId);
     setDeviceCookie(response, deviceId);
+    setBoundParticipantCookie(response, participantId);
 
     return response;
   } catch (err: unknown) {

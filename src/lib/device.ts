@@ -110,43 +110,156 @@ export async function getAsyncDeviceHeaders(): Promise<Record<string, string>> {
 }
 
 const BOUND_PARTICIPANT_KEY = "santa_bound_participant_v7";
+const IDB_NAME = "santa_security_lock";
+const IDB_STORE = "device_lock";
+
+function openLockDB(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !window.indexedDB) {
+      resolve(null);
+      return;
+    }
+    try {
+      const request = window.indexedDB.open(IDB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 export function getStoredBoundParticipant(): { id: string; name: string } | null {
   if (typeof window === "undefined") return null;
+  // 1. Check localStorage
   try {
     const raw = window.localStorage.getItem(BOUND_PARTICIPANT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.id === "string" && typeof parsed.name === "string") {
-      return parsed;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.id === "string" && typeof parsed.name === "string") {
+        return parsed;
+      }
     }
   } catch {
     // ignore
   }
+
+  // 2. Check sessionStorage fallback
+  try {
+    const rawSession = window.sessionStorage.getItem(BOUND_PARTICIPANT_KEY);
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession);
+      if (parsed && typeof parsed.id === "string" && typeof parsed.name === "string") {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return null;
+}
+
+export async function getAsyncStoredBoundParticipant(): Promise<{ id: string; name: string } | null> {
+  const syncResult = getStoredBoundParticipant();
+  if (syncResult) return syncResult;
+
+  // 3. Check IndexedDB fallback
+  try {
+    const db = await openLockDB();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.get(BOUND_PARTICIPANT_KEY);
+        req.onsuccess = () => {
+          const val = req.result;
+          if (val && typeof val.id === "string" && typeof val.name === "string") {
+            // Re-populate localStorage & sessionStorage
+            setStoredBoundParticipant(val);
+            resolve(val);
+          } else {
+            resolve(null);
+          }
+        };
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  } catch {
+    return null;
+  }
 }
 
 export function setStoredBoundParticipant(participant: { id: string; name: string } | null): void {
   if (typeof window === "undefined") return;
+  const serialized = participant ? JSON.stringify({ id: participant.id, name: participant.name }) : null;
+
+  // 1. localStorage
   try {
-    if (!participant) {
+    if (!serialized) {
       window.localStorage.removeItem(BOUND_PARTICIPANT_KEY);
     } else {
-      window.localStorage.setItem(
-        BOUND_PARTICIPANT_KEY,
-        JSON.stringify({ id: participant.id, name: participant.name })
-      );
+      window.localStorage.setItem(BOUND_PARTICIPANT_KEY, serialized);
     }
   } catch {
     // ignore
   }
-}
 
-export function clearStoredBoundParticipant(): void {
-  if (typeof window === "undefined") return;
+  // 2. sessionStorage
   try {
-    window.localStorage.removeItem(BOUND_PARTICIPANT_KEY);
+    if (!serialized) {
+      window.sessionStorage.removeItem(BOUND_PARTICIPANT_KEY);
+    } else {
+      window.sessionStorage.setItem(BOUND_PARTICIPANT_KEY, serialized);
+    }
   } catch {
     // ignore
   }
+
+  // 3. IndexedDB
+  openLockDB().then((db) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      if (!participant) {
+        store.delete(BOUND_PARTICIPANT_KEY);
+      } else {
+        store.put(participant, BOUND_PARTICIPANT_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }).catch(() => {});
+}
+
+export function clearStoredBoundParticipant(): void {
+  setStoredBoundParticipant(null);
+}
+
+/**
+ * Detects if the user is running inside an In-App browser (Instagram, WhatsApp, Telegram, Facebook)
+ * where WebAuthn / Passkeys may not be natively supported or restricted by WebView sandbox.
+ */
+export function isInAppBrowser(): boolean {
+  if (typeof window === "undefined" || !navigator.userAgent) return false;
+  const ua = navigator.userAgent.toLowerCase();
+  return (
+    ua.includes("instagram") ||
+    ua.includes("fbav") ||
+    ua.includes("fban") ||
+    ua.includes("whatsapp") ||
+    ua.includes("telegram") ||
+    ua.includes("line/") ||
+    ua.includes("micromessenger")
+  );
 }

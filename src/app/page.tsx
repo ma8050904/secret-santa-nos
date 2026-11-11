@@ -13,6 +13,7 @@ import {
   getDeviceHeaders,
   getAsyncDeviceHeaders,
   getStoredBoundParticipant,
+  getAsyncStoredBoundParticipant,
   setStoredBoundParticipant,
   clearStoredBoundParticipant,
 } from "@/lib/device";
@@ -92,12 +93,19 @@ function SecretSantaApp() {
   // Synchronous ref to prevent stale closures when clicking any card
   const lockedUserRef = useRef<{ id: string; name: string } | null>(null);
 
-  // Synchronously seed bound device user from storage on mount
+  // Synchronously seed bound device user from storage on mount (with IndexedDB fallback)
   useEffect(() => {
     const stored = getStoredBoundParticipant();
     if (stored) {
       setBoundDeviceUser(stored);
       lockedUserRef.current = stored;
+    } else {
+      getAsyncStoredBoundParticipant().then((idbUser) => {
+        if (idbUser) {
+          setBoundDeviceUser(idbUser);
+          lockedUserRef.current = idbUser;
+        }
+      });
     }
   }, []);
 
@@ -458,6 +466,7 @@ function SecretSantaApp() {
             error={error}
             onSelectParticipant={handleSelectParticipant}
             selectedParticipantId={activeParticipant?.id || selectedForAuth?.id || null}
+            boundParticipantId={boundDeviceUser?.id || activeParticipant?.id || null}
             onRetry={() => loadParticipants(false)}
           />
         </div>
