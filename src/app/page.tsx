@@ -147,10 +147,16 @@ function SecretSantaApp() {
 
   // Load participants directory silently without flashing skeletons
   const loadParticipants = useCallback(async (isBackground = true) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
       if (!isBackground) setIsLoading(true);
       setError(null);
-      const res = await fetch(`/api/participants?t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/participants?t=${Date.now()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (!res.ok) {
         throw new Error("Unable to connect. Please check your connection.");
       }
@@ -159,6 +165,7 @@ function SecretSantaApp() {
         setParticipants(data.participants);
       }
     } catch (err: unknown) {
+      clearTimeout(timeoutId);
       if (!isBackground) {
         const msg = err instanceof Error ? err.message : "Connection notice.";
         setError(msg);
@@ -170,8 +177,14 @@ function SecretSantaApp() {
 
   // Check existing session
   const checkSession = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
     try {
-      const res = await fetch(`/api/auth/session?t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/auth/session?t=${Date.now()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok && data.authenticated && data.participant) {
         setActiveParticipant(data.participant);
@@ -191,6 +204,7 @@ function SecretSantaApp() {
         setRevealedRecipient(undefined);
       }
     } catch {
+      clearTimeout(timeoutId);
       setActiveParticipant(null);
       setActivePin(null);
       setBoundDeviceUser(null);
@@ -203,12 +217,16 @@ function SecretSantaApp() {
 
   // Check existing device and hardware binding
   const checkDeviceStatus = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
     try {
       const headers = await getAsyncDeviceHeaders();
       const res = await fetch(`/api/auth/device-status?t=${Date.now()}`, {
         headers,
         cache: "no-store",
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok && data.bound && data.participantId && data.participantName) {
         const boundParticipant = {
@@ -229,6 +247,7 @@ function SecretSantaApp() {
         setRevealedRecipient(undefined);
       }
     } catch {
+      clearTimeout(timeoutId);
       // Non-blocking
     }
   }, []);

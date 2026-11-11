@@ -325,10 +325,14 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
     setError(null);
     setIsSubmitting(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const headers = await getAsyncDeviceHeaders();
       const res = await fetch("/api/auth/pin", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           ...headers,
@@ -338,6 +342,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           pin: pin.trim(),
         }),
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
 
@@ -376,8 +381,13 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         recipientName: data.recipientName,
         isNewRegistration: Boolean(data.isNewRegistration),
       });
-    } catch {
-      setError("Connection error. Please try again.");
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err?.name === "AbortError") {
+        setError("Request timed out. Please check your connection and try again.");
+      } else {
+        setError("Connection error. Please try again.");
+      }
       setIsSubmitting(false);
     }
   };

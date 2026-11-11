@@ -44,3 +44,4 @@ bin/
 .data/
 backups/
 
+.vercel_backup_old/

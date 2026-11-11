@@ -18,19 +18,20 @@ export function getWebAuthnRpDetails(req: NextRequest): { rpID: string; origin: 
   const hostHeader =
     req.headers.get("x-forwarded-host") ||
     req.headers.get("host") ||
-    "secret-santa-holiday.vercel.app";
+    "secret-santa-nos.vercel.app";
 
   const rawHostname = hostHeader.split(":")[0].toLowerCase();
 
   // Whitelist check to prevent Host header injection attacks on WebAuthn RP ID and Origin
   const isAllowedHost =
+    rawHostname === "secret-santa-nos.vercel.app" ||
     rawHostname === "secret-santa-holiday.vercel.app" ||
     rawHostname.endsWith(".vercel.app") ||
     rawHostname === "localhost" ||
     rawHostname === "127.0.0.1" ||
     Boolean(process.env.APP_DOMAIN && rawHostname === process.env.APP_DOMAIN.toLowerCase());
 
-  const hostname = isAllowedHost ? rawHostname : "secret-santa-holiday.vercel.app";
+  const hostname = isAllowedHost ? rawHostname : "secret-santa-nos.vercel.app";
   const proto =
     req.headers.get("x-forwarded-proto") ||
     (hostname === "localhost" || hostname === "127.0.0.1" ? "http" : "https");

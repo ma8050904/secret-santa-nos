@@ -136,8 +136,8 @@ export default function AdminDashboardPage() {
   // Participant Directory Collapsible state (collapsed by default)
   const [isParticipantDirectoryExpanded, setIsParticipantDirectoryExpanded] = useState(false);
 
-  // Participant Portal QR Code state (targets exact production URL)
-  const PRODUCTION_PORTAL_URL = "https://secret-santa-holiday.vercel.app";
+  // Participant Portal QR Code state (targets dynamic origin or fallback to production URL)
+  const PRODUCTION_PORTAL_URL = typeof window !== "undefined" && window.location.origin ? window.location.origin : "https://secret-santa-nos.vercel.app";
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
   const [hasCopiedPortalLink, setHasCopiedPortalLink] = useState(false);

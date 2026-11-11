@@ -9,6 +9,7 @@ import {
   getDeviceOrHardwareBinding,
   getEventState,
   isValidPasskeyCredentialId,
+  clearDeviceBindingsForParticipant,
 } from "../src/lib/storage";
 
 let passed = 0;
@@ -56,12 +57,12 @@ async function runTests() {
     assert(localRp.origin === "http://localhost:3000", "Localhost origin preserves port");
 
     // Malicious Host header injection attempt (e.g. Host: evil-phishing.com)
-    const attackReq = new NextRequest("https://secret-santa-holiday.vercel.app/api/auth/biometric/options", {
+    const attackReq = new NextRequest("https://secret-santa-nos.vercel.app/api/auth/biometric/options", {
       headers: { host: "evil-phishing.com", "x-forwarded-host": "evil-phishing.com" },
     });
     const attackRp = getWebAuthnRpDetails(attackReq);
-    assert(attackRp.rpID === "secret-santa-holiday.vercel.app", "Malicious Host header rejected: rpID defaults to production domain");
-    assert(attackRp.origin === "https://secret-santa-holiday.vercel.app", "Malicious Host header rejected: origin defaults to production domain");
+    assert(attackRp.rpID === "secret-santa-nos.vercel.app", "Malicious Host header rejected: rpID defaults to production domain");
+    assert(attackRp.origin === "https://secret-santa-nos.vercel.app", "Malicious Host header rejected: origin defaults to production domain");
   }
 
   // 2. WebAuthn Base64URL Sanitization & DOMException atob() Defense
@@ -167,6 +168,9 @@ async function runTests() {
     const testDeviceId = `dev_test_${Date.now()}`;
     const testHwFp = `hw_test_${Date.now()}`;
 
+    // Clear any existing test binding before test
+    await clearDeviceBindingsForParticipant(p1.id);
+
     // Bind p1 to device and hardware fingerprint
     await bindDeviceToParticipant(testDeviceId, p1.id, p1.name, {
       ip: "10.0.0.1",
@@ -185,6 +189,9 @@ async function runTests() {
     // Attempt by P2 from Incognito (new device ID, same hardware fingerprint)
     const conflictByHw = await getDeviceOrHardwareBinding("new_incognito_device_id", testHwFp);
     assert(conflictByHw !== null && conflictByHw.participantId === p1.id, "Incognito hardware fingerprint conflict detected: bound to P1");
+
+    // Clean up test binding so no leftover test state remains
+    await clearDeviceBindingsForParticipant(p1.id);
   }
 
   // 6. Concurrency Load Test: 56 Simultaneous Participant Requests
