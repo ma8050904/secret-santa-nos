@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdminRequest } from "@/lib/admin-auth";
+import { verifyAdminRequest, setAdminSessionCookie } from "@/lib/admin-auth";
 import { updateAdminPassword } from "@/lib/storage";
 
 export async function POST(req: NextRequest) {
@@ -21,14 +21,8 @@ export async function POST(req: NextRequest) {
     const result = await updateAdminPassword(newPassword.trim());
 
     const response = NextResponse.json(result);
-    // Update admin cookie with new password
-    response.cookies.set("santa_admin_token", newPassword.trim(), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7,
-      path: "/",
-    });
+    // Securely issue HMAC-SHA256 signed admin session token instead of storing raw password
+    setAdminSessionCookie(response);
 
     return response;
   } catch (err: unknown) {

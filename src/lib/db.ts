@@ -245,9 +245,33 @@ export async function atomicBindDeviceToParticipant(
   const cleanDeviceId = deviceId.trim().toLowerCase();
   const cleanHwFp = meta?.hardwareFingerprint?.trim().toLowerCase() || null;
   const now = new Date().toISOString();
-  const resetVersion = meta?.resetVersion || 1;
+
+  let resetVersion = meta?.resetVersion;
+  if (!resetVersion) {
+    try {
+      const stateRows = await sql`SELECT (value->>'deviceResetVersion')::int as rv FROM event_meta WHERE key = 'master_event_state' LIMIT 1;`;
+      if (stateRows.length > 0 && stateRows[0].rv) {
+        resetVersion = Number(stateRows[0].rv);
+      }
+    } catch {
+      // fallback
+    }
+  }
+  resetVersion = resetVersion || 1;
 
   try {
+    // 0. Check if participant is already bound to a different device (Strict One Device Per Participant)
+    const existingParticipantRows = await sql`
+      SELECT device_id, participant_name FROM device_bindings
+      WHERE participant_id = ${participantId} AND reset_version >= ${resetVersion};
+    `;
+    if (existingParticipantRows.length > 0 && existingParticipantRows[0].device_id !== cleanDeviceId) {
+      return {
+        success: false,
+        error: `Participant ${participantName} already has an active registered device. Multiple devices per account are not permitted.`,
+      };
+    }
+
     // 1. Check existing device binding
     const existingDeviceRows = await sql`
       SELECT participant_id, participant_name FROM device_bindings
@@ -376,6 +400,71 @@ export async function getPostgresDeviceOrHardwareBinding(
   }
 
   return null;
+}
+
+/**
+ * Clears an individual participant's authentication credentials, reveal state,
+ * and associated device bindings in PostgreSQL.
+ */
+export async function clearPostgresParticipant(participantId: string): Promise<boolean> {
+  const sql = getDbClient();
+  if (!sql) return false;
+  try {
+    await sql`
+      UPDATE event_participants
+      SET
+        pin_hash = NULL,
+        pin_salt = NULL,
+        encrypted_with_pin = FALSE,
+        is_revealed = FALSE,
+        revealed_at = NULL,
+        passkey_credential_id = NULL,
+        passkey_public_key = NULL,
+        passkey_counter = 0,
+        passkey_registered_at = NULL,
+        updated_at = NOW()
+      WHERE id = ${participantId};
+    `;
+
+    await sql`DELETE FROM device_bindings WHERE participant_id = ${participantId};`;
+    await sql`DELETE FROM hardware_bindings WHERE participant_id = ${participantId};`;
+
+    return true;
+  } catch (err) {
+    console.error("Database error clearing participant in PostgreSQL:", err);
+    return false;
+  }
+}
+
+/**
+ * Resets all participant authentication credentials, reveal states, and passkeys in PostgreSQL.
+ * Used during full draw regeneration.
+ */
+export async function resetPostgresParticipantsAuthentication(): Promise<boolean> {
+  const sql = getDbClient();
+  if (!sql) return false;
+  try {
+    await sql`
+      UPDATE event_participants
+      SET
+        pin_hash = NULL,
+        pin_salt = NULL,
+        encrypted_with_pin = FALSE,
+        is_revealed = FALSE,
+        revealed_at = NULL,
+        passkey_credential_id = NULL,
+        passkey_public_key = NULL,
+        passkey_counter = 0,
+        passkey_registered_at = NULL,
+        updated_at = NOW();
+    `;
+    await sql`TRUNCATE TABLE device_bindings;`;
+    await sql`TRUNCATE TABLE hardware_bindings;`;
+    return true;
+  } catch (err) {
+    console.error("Database error resetting all participants in PostgreSQL:", err);
+    return false;
+  }
 }
 
 /**
@@ -515,7 +604,7 @@ export async function getPostgresAllPasskeyCredentialIds(): Promise<string[]> {
 /**
  * Persists the authoritative master event state atomically into PostgreSQL.
  */
-export async function savePostgresEventState(state: EventState): Promise<boolean> {
+export async function savePostgresEventState(state: EventState, isFullReset: boolean = false): Promise<boolean> {
   const sql = getDbClient();
   if (!sql) return false;
   try {
@@ -527,37 +616,77 @@ export async function savePostgresEventState(state: EventState): Promise<boolean
       SET value = ${jsonStr}::jsonb, updated_at = NOW();
     `;
 
+    // Detect if this is an authentic full reset / fresh draw state
+    const isReset = isFullReset || (
+      Array.isArray(state.participants) &&
+      state.participants.length > 0 &&
+      state.participants.every((p) => !p.pinHash && !p.passkeyCredentialId && !p.isRevealed)
+    );
+
     // Also sync all participants into the event_participants table
     if (state.participants && Array.isArray(state.participants)) {
       for (const p of state.participants) {
-        await sql`
-          INSERT INTO event_participants (
-            id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
-            pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
-            passkey_public_key, passkey_counter, passkey_registered_at, updated_at
-          )
-          VALUES (
-            ${p.id}, ${p.name}, ${p.code || ''}, ${p.codeHash || ''}, ${p.encryptedRecipient || null},
-            ${Boolean(p.isRevealed)}, ${p.revealedAt ? new Date(p.revealedAt) : null},
-            ${p.pinHash || null}, ${p.pinSalt || null}, ${Boolean(p.encryptedWithPin)},
-            ${p.passkeyCredentialId || null}, ${p.passkeyPublicKey || null},
-            ${p.passkeyCounter || 0}, ${p.passkeyRegisteredAt ? new Date(p.passkeyRegisteredAt) : null}, NOW()
-          )
-          ON CONFLICT (id) DO UPDATE
-          SET
-            name = EXCLUDED.name,
-            encrypted_recipient = EXCLUDED.encrypted_recipient,
-            is_revealed = EXCLUDED.is_revealed,
-            revealed_at = EXCLUDED.revealed_at,
-            pin_hash = COALESCE(event_participants.pin_hash, EXCLUDED.pin_hash),
-            pin_salt = COALESCE(event_participants.pin_salt, EXCLUDED.pin_salt),
-            encrypted_with_pin = COALESCE(event_participants.encrypted_with_pin, EXCLUDED.encrypted_with_pin),
-            passkey_credential_id = COALESCE(event_participants.passkey_credential_id, EXCLUDED.passkey_credential_id),
-            passkey_public_key = COALESCE(event_participants.passkey_public_key, EXCLUDED.passkey_public_key),
-            passkey_counter = GREATEST(event_participants.passkey_counter, EXCLUDED.passkey_counter),
-            passkey_registered_at = COALESCE(event_participants.passkey_registered_at, EXCLUDED.passkey_registered_at),
-            updated_at = NOW();
-        `;
+        if (isReset) {
+          await sql`
+            INSERT INTO event_participants (
+              id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
+              pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
+              passkey_public_key, passkey_counter, passkey_registered_at, updated_at
+            )
+            VALUES (
+              ${p.id}, ${p.name}, ${p.code || ''}, ${p.codeHash || ''}, ${p.encryptedRecipient || null},
+              ${Boolean(p.isRevealed)}, ${p.revealedAt ? new Date(p.revealedAt) : null},
+              ${p.pinHash || null}, ${p.pinSalt || null}, ${Boolean(p.encryptedWithPin)},
+              ${p.passkeyCredentialId || null}, ${p.passkeyPublicKey || null},
+              ${p.passkeyCounter || 0}, ${p.passkeyRegisteredAt ? new Date(p.passkeyRegisteredAt) : null}, NOW()
+            )
+            ON CONFLICT (id) DO UPDATE
+            SET
+              name = EXCLUDED.name,
+              code = EXCLUDED.code,
+              code_hash = EXCLUDED.code_hash,
+              encrypted_recipient = EXCLUDED.encrypted_recipient,
+              is_revealed = EXCLUDED.is_revealed,
+              revealed_at = EXCLUDED.revealed_at,
+              pin_hash = EXCLUDED.pin_hash,
+              pin_salt = EXCLUDED.pin_salt,
+              encrypted_with_pin = EXCLUDED.encrypted_with_pin,
+              passkey_credential_id = EXCLUDED.passkey_credential_id,
+              passkey_public_key = EXCLUDED.passkey_public_key,
+              passkey_counter = EXCLUDED.passkey_counter,
+              passkey_registered_at = EXCLUDED.passkey_registered_at,
+              updated_at = NOW();
+          `;
+        } else {
+          await sql`
+            INSERT INTO event_participants (
+              id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
+              pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
+              passkey_public_key, passkey_counter, passkey_registered_at, updated_at
+            )
+            VALUES (
+              ${p.id}, ${p.name}, ${p.code || ''}, ${p.codeHash || ''}, ${p.encryptedRecipient || null},
+              ${Boolean(p.isRevealed)}, ${p.revealedAt ? new Date(p.revealedAt) : null},
+              ${p.pinHash || null}, ${p.pinSalt || null}, ${Boolean(p.encryptedWithPin)},
+              ${p.passkeyCredentialId || null}, ${p.passkeyPublicKey || null},
+              ${p.passkeyCounter || 0}, ${p.passkeyRegisteredAt ? new Date(p.passkeyRegisteredAt) : null}, NOW()
+            )
+            ON CONFLICT (id) DO UPDATE
+            SET
+              name = EXCLUDED.name,
+              encrypted_recipient = EXCLUDED.encrypted_recipient,
+              is_revealed = EXCLUDED.is_revealed,
+              revealed_at = EXCLUDED.revealed_at,
+              pin_hash = COALESCE(event_participants.pin_hash, EXCLUDED.pin_hash),
+              pin_salt = COALESCE(event_participants.pin_salt, EXCLUDED.pin_salt),
+              encrypted_with_pin = COALESCE(event_participants.encrypted_with_pin, EXCLUDED.encrypted_with_pin),
+              passkey_credential_id = COALESCE(event_participants.passkey_credential_id, EXCLUDED.passkey_credential_id),
+              passkey_public_key = COALESCE(event_participants.passkey_public_key, EXCLUDED.passkey_public_key),
+              passkey_counter = GREATEST(event_participants.passkey_counter, EXCLUDED.passkey_counter),
+              passkey_registered_at = COALESCE(event_participants.passkey_registered_at, EXCLUDED.passkey_registered_at),
+              updated_at = NOW();
+          `;
+        }
       }
     }
 

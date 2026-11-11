@@ -1238,8 +1238,15 @@ export async function authenticateParticipantBiometric(
     return { success: false, error: "No biometric passkey registered for this participant." };
   }
 
-  // Update anti-replay counter if provided by authenticator verification
+  // Update anti-replay counter if provided by authenticator verification (defense-in-depth)
   if (typeof newCounter === "number") {
+    const currentCounter = Number(runtime.passkeyCounter || 0);
+    if (currentCounter > 0 && newCounter <= currentCounter) {
+      return {
+        success: false,
+        error: `Potential replay attack detected: Authenticator counter (${newCounter}) must be strictly greater than stored counter (${currentCounter}).`,
+      };
+    }
     runtime.passkeyCounter = newCounter;
     await saveParticipantRuntimeState(runtime);
   }
@@ -1828,7 +1835,17 @@ export async function bindDeviceToParticipant(
   // If transactional PostgreSQL database is configured, enforce atomic uniqueness constraints in Postgres
   const { isPostgresConfigured, atomicBindDeviceToParticipant } = await import("./db");
   if (isPostgresConfigured()) {
-    return atomicBindDeviceToParticipant(deviceId, participantId, participantName, meta);
+    let resetVersion = 1;
+    try {
+      const state = await getEventState();
+      resetVersion = state.deviceResetVersion || 1;
+    } catch {
+      // fallback
+    }
+    return atomicBindDeviceToParticipant(deviceId, participantId, participantName, {
+      ...meta,
+      resetVersion,
+    });
   }
 
   const cleanId = deviceId.trim().toLowerCase();
@@ -1958,6 +1975,16 @@ export async function clearDeviceBindingsForParticipant(
     if (rec.participantId === participantId) {
       deviceBindingCache.delete(devId);
       clearedCount++;
+    }
+  }
+
+  // 0. Primary: PostgreSQL Cleanup
+  const { isPostgresConfigured, clearPostgresParticipant } = await import("./db");
+  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+    try {
+      await clearPostgresParticipant(participantId);
+    } catch (pgErr) {
+      console.warn("Notice: clearing participant in Postgres:", pgErr);
     }
   }
 
@@ -2473,13 +2500,13 @@ export async function fullEventReset(
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
 
-    // Clear PostgreSQL device bindings
-    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    // Clear PostgreSQL device bindings and reset all participant credentials
+    const { isPostgresConfigured, resetPostgresParticipantsAuthentication } = await import("./db");
     if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
       try {
-        await clearPostgresDeviceBindings();
+        await resetPostgresParticipantsAuthentication();
       } catch (pgErr) {
-        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+        console.warn("Notice: clearing Postgres participants authentication:", pgErr);
       }
     }
 
@@ -3014,13 +3041,13 @@ export async function regenerateFullDraw(
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
 
-    // Clear PostgreSQL device bindings
-    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    // Clear PostgreSQL device bindings and reset all participant credentials
+    const { isPostgresConfigured, resetPostgresParticipantsAuthentication } = await import("./db");
     if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
       try {
-        await clearPostgresDeviceBindings();
+        await resetPostgresParticipantsAuthentication();
       } catch (pgErr) {
-        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+        console.warn("Notice: clearing Postgres participants authentication:", pgErr);
       }
     }
 
@@ -3260,13 +3287,13 @@ export async function setDrawMode(
     lastMarkersSyncTimestamp = 0;
     clearAllRateLimits();
 
-    // Clear PostgreSQL device bindings
-    const { isPostgresConfigured, clearPostgresDeviceBindings } = await import("./db");
+    // Clear PostgreSQL device bindings and reset all participant credentials
+    const { isPostgresConfigured, resetPostgresParticipantsAuthentication } = await import("./db");
     if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
       try {
-        await clearPostgresDeviceBindings();
+        await resetPostgresParticipantsAuthentication();
       } catch (pgErr) {
-        console.warn("Notice: clearing Postgres device bindings:", pgErr);
+        console.warn("Notice: clearing Postgres participants authentication:", pgErr);
       }
     }
 
