@@ -125,11 +125,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           if (optData.boundParticipantId) {
             onDeviceBound?.({
               id: optData.boundParticipantId,
-              name: optData.boundParticipantName || "حسابك السابق",
+              name: optData.boundParticipantName || "Registered User",
             });
           }
           setIsDeviceBlocked(true);
-          setError(optData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
+          setError(optData.error || "This device is permanently bound to another participant's profile.");
           setIsSubmitting(false);
           return;
         }
@@ -170,11 +170,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           if (verifyData.boundParticipantId) {
             onDeviceBound?.({
               id: verifyData.boundParticipantId,
-              name: verifyData.boundParticipantName || "حسابك السابق",
+              name: verifyData.boundParticipantName || "Registered User",
             });
           }
           setIsDeviceBlocked(true);
-          setError(verifyData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
+          setError(verifyData.error || "This device is permanently bound to another participant's profile.");
           setIsSubmitting(false);
           return;
         }
@@ -214,11 +214,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           if (optData.boundParticipantId) {
             onDeviceBound?.({
               id: optData.boundParticipantId,
-              name: optData.boundParticipantName || "حسابك السابق",
+              name: optData.boundParticipantName || "Registered User",
             });
           }
           setIsDeviceBlocked(true);
-          setError(optData.error || "هذا الجهاز مسجل به حساب آخر مسبقاً.");
+          setError(optData.error || "This device is permanently bound to another participant's profile.");
           setIsSubmitting(false);
           return;
         }
@@ -227,7 +227,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           // Account already claimed or options failed
           if (optRes.status === 403) {
             setIsDeviceBlocked(true);
-            setError(optData.error || "هذا الحساب مغلق ومسجل مسبقاً ولا يمكن تسجيله مرة أخرى.");
+            setError(optData.error || "This profile has already been claimed. Please authenticate with the original Passkey or PIN.");
             setIsSubmitting(false);
             return;
           }
@@ -247,7 +247,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           // This proves this phone already has a Passkey for another student on this website!
           if (err?.name === "InvalidStateError") {
             setIsDeviceBlocked(true);
-            setError("هذا الجهاز مسجل به حساب مسبقاً عبر البصمة (Face ID / Touch ID). يمنع فتح أو تسجيل أي حساب آخر من نفس الجهاز.");
+            setError("This device is already registered to another participant via Face ID / Touch ID. You cannot unlock or claim multiple profiles on the same device.");
             setIsSubmitting(false);
             return;
           }
@@ -276,11 +276,11 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           if (verifyData.boundParticipantId) {
             onDeviceBound?.({
               id: verifyData.boundParticipantId,
-              name: verifyData.boundParticipantName || "حسابك السابق",
+              name: verifyData.boundParticipantName || "Registered User",
             });
           }
           setIsDeviceBlocked(true);
-          setError(verifyData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
+          setError(verifyData.error || "This device is permanently bound to another participant's profile.");
           setIsSubmitting(false);
           return;
         }
@@ -288,7 +288,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         if (!verifyRes.ok || !verifyData.success) {
           if (verifyRes.status === 403) {
             setIsDeviceBlocked(true);
-            setError(verifyData.error || "تم حظر التسجيل المتعدد.");
+            setError(verifyData.error || "This device is permanently bound to another participant's profile.");
             setIsSubmitting(false);
             return;
           }
@@ -371,7 +371,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         if (data.boundParticipantId) {
           onDeviceBound?.({
             id: data.boundParticipantId,
-            name: data.boundParticipantName || "حسابك السابق",
+            name: data.boundParticipantName || "Registered User",
           });
         }
         setError(

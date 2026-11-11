@@ -128,7 +128,7 @@ export async function handleBiometricVerify(
           const res = NextResponse.json(
             {
               success: false,
-              error: `هذا الجهاز مرتبط مسبقاً بحساب ${owner.participantName}، لا يمكنك فتح أو تسجيل اسم آخر`,
+              error: `This device is permanently bound to ${owner.participantName}'s profile. You cannot unlock or claim multiple profiles on the same device.`,
               boundParticipantId: owner.participantId,
               boundParticipantName: owner.participantName,
               code: "DEVICE_ALREADY_BOUND",
@@ -229,7 +229,7 @@ export async function handleBiometricVerify(
           const res = NextResponse.json(
             {
               success: false,
-              error: `هذا الجهاز مرتبط مسبقاً بحساب ${owner.participantName}، لا يمكنك فتح أو تسجيل اسم آخر`,
+              error: `This device is permanently bound to ${owner.participantName}'s profile. You cannot unlock or claim multiple profiles on the same device.`,
               boundParticipantId: owner.participantId,
               boundParticipantName: owner.participantName,
               code: "DEVICE_ALREADY_BOUND",

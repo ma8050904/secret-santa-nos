@@ -486,8 +486,8 @@ function SecretSantaApp() {
             lockedUserRef.current = bound;
             setSelectedForAuth(null);
             showToast({
-              title: "الجهاز مقفل بحساب آخر",
-              message: `هذا الجهاز مرتبط رسمياً بحساب ${bound.name}. يمنع فتح أو تسجيل أي حساب آخر.`,
+              title: "Device Locked to Another Profile",
+              message: `This device is permanently bound to ${bound.name}'s profile. You cannot unlock or claim multiple profiles on the same device.`,
               type: "error",
             });
           }}
