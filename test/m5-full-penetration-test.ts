@@ -28,7 +28,12 @@ import {
   regenerateFullDraw,
   getAdminSafeState,
 } from "../src/lib/storage";
-import { PARTICIPANTS, EXCLUSION_PAIRS, RECIPROCAL_PAIRS, DIRECTED_PAIRS, DESIGNATED_SUBGROUP_NAMES } from "../src/lib/constants";
+import { PARTICIPANTS } from "../src/lib/constants";
+import { SUBGROUP_20_IDS } from "../src/lib/derangement";
+
+const DESIGNATED_SUBGROUP_NAMES = SUBGROUP_20_IDS.map(
+  (id) => PARTICIPANTS.find((p) => p.id === id)?.name
+).filter(Boolean) as string[];
 
 // Load environment variables if available
 if (fs.existsSync(".env.local")) {

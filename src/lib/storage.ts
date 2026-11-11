@@ -446,7 +446,12 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
         return pgState;
       }
     } catch (pgErr) {
-      console.warn("Notice: PostgreSQL fetch attempt:", pgErr);
+      console.error("Critical: PostgreSQL event state fetch error:", pgErr);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          `Production Database Read Failure: ${pgErr instanceof Error ? pgErr.message : "PostgreSQL unreachable"}`
+        );
+      }
     }
   }
 
@@ -562,9 +567,17 @@ export async function saveEventState(state: EventState): Promise<void> {
     const { isPostgresConfigured, savePostgresEventState } = await import("./db");
     if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
       try {
-        await savePostgresEventState(state);
+        const ok = await savePostgresEventState(state);
+        if (!ok) {
+          throw new Error("PostgreSQL save returned false");
+        }
       } catch (pgErr) {
         console.error("Critical: Failed to save state to PostgreSQL:", pgErr);
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            `Production Database Write Failure: ${pgErr instanceof Error ? pgErr.message : "Unable to persist event state to PostgreSQL"}`
+          );
+        }
       }
     }
 
@@ -625,7 +638,12 @@ export async function getParticipantRuntimeState(
         return pgParticipant;
       }
     } catch (pgErr) {
-      console.warn("Notice: PostgreSQL participant fetch attempt:", pgErr);
+      console.error("Critical: PostgreSQL participant fetch error:", pgErr);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          `Production Database Read Failure: ${pgErr instanceof Error ? pgErr.message : "PostgreSQL unreachable"}`
+        );
+      }
     }
   }
 
@@ -730,9 +748,17 @@ export async function saveParticipantRuntimeState(
   const { isPostgresConfigured, savePostgresParticipantState } = await import("./db");
   if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
     try {
-      await savePostgresParticipantState(state);
+      const ok = await savePostgresParticipantState(state);
+      if (!ok) {
+        throw new Error("PostgreSQL save participant returned false");
+      }
     } catch (pgErr) {
       console.error("Critical: Failed to save participant state to PostgreSQL:", pgErr);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          `Production Database Write Failure: ${pgErr instanceof Error ? pgErr.message : "Unable to persist participant state to PostgreSQL"}`
+        );
+      }
     }
   }
 
@@ -1758,8 +1784,11 @@ export function isValidPasskeyCredentialId(id: unknown): id is string {
   const trimmed = id.trim();
   if (
     trimmed === "passkey_marker_present" ||
+    trimmed === "registered_marker_present" ||
+    trimmed.includes("marker") ||
     trimmed === "registered" ||
     trimmed === "true" ||
+    trimmed === "false" ||
     trimmed.includes(" ")
   ) {
     return false;

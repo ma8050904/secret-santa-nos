@@ -14,7 +14,10 @@ import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
+export async function handleBiometricOptions(
+  req: NextRequest,
+  forcedMode?: "register" | "authenticate"
+) {
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body.participantId !== "string") {
@@ -55,8 +58,10 @@ export async function POST(req: NextRequest) {
     const { rpID } = getWebAuthnRpDetails(req);
     const BASE64URL_REGEX = /^[A-Za-z0-9_-]{16,}$/;
 
-    // 3. Mode Selection: Authenticate (if valid passkey exists) or Register (first time only)
-    if (status.hasPasskey) {
+    // 3. Mode Selection: Authenticate (if valid passkey exists and not forced register) or Register (first time only)
+    const shouldAuthenticate = forcedMode ? forcedMode === "authenticate" : status.hasPasskey;
+
+    if (shouldAuthenticate) {
       if (isValidPasskeyCredentialId(status.passkeyCredentialId)) {
         const options = await generateAuthenticationOptions({
           rpID,
@@ -148,4 +153,8 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function POST(req: NextRequest) {
+  return handleBiometricOptions(req);
 }

@@ -298,8 +298,8 @@ export async function atomicBindDeviceToParticipant(
       }
     }
 
-    // 3. Atomic Upsert for Device Binding
-    await sql`
+    // 3. Atomic Upsert for Device Binding with Participant Ownership Lock
+    const devRows = await sql`
       INSERT INTO device_bindings (
         device_id, participant_id, participant_name, hardware_fingerprint,
         bound_at, last_used_at, ip, user_agent, reset_version
@@ -312,12 +312,21 @@ export async function atomicBindDeviceToParticipant(
       SET
         last_used_at = ${now},
         ip = ${meta?.ip || "unknown"},
-        user_agent = ${meta?.userAgent || ""};
+        user_agent = ${meta?.userAgent || ""},
+        hardware_fingerprint = COALESCE(device_bindings.hardware_fingerprint, EXCLUDED.hardware_fingerprint)
+      WHERE device_bindings.participant_id = EXCLUDED.participant_id
+      RETURNING participant_id;
     `;
+    if (!devRows || devRows.length === 0) {
+      return {
+        success: false,
+        error: "Device binding conflict: This device is already bound to another participant.",
+      };
+    }
 
-    // 4. Atomic Upsert for Hardware Binding
+    // 4. Atomic Upsert for Hardware Binding with Participant Ownership Lock
     if (cleanHwFp && cleanHwFp.length > 5) {
-      await sql`
+      const hwRows = await sql`
         INSERT INTO hardware_bindings (
           hardware_fingerprint, participant_id, participant_name, device_id, bound_at, reset_version
         )
@@ -326,8 +335,16 @@ export async function atomicBindDeviceToParticipant(
         )
         ON CONFLICT (hardware_fingerprint) DO UPDATE
         SET
-          device_id = ${cleanDeviceId};
+          device_id = EXCLUDED.device_id
+        WHERE hardware_bindings.participant_id = EXCLUDED.participant_id
+        RETURNING participant_id;
       `;
+      if (!hwRows || hwRows.length === 0) {
+        return {
+          success: false,
+          error: "Hardware binding conflict: This physical device is already bound to another participant.",
+        };
+      }
     }
 
     return { success: true };

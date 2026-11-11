@@ -21,7 +21,10 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
+export async function handleBiometricVerify(
+  req: NextRequest,
+  forcedMode?: "register" | "authenticate"
+) {
   try {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
     const userAgent = req.headers.get("user-agent") || "";
@@ -35,6 +38,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { participantId, mode, response: clientResponse } = body;
+    const effectiveMode = forcedMode || mode;
     const deviceId = getDeviceIdFromRequest(req);
     const hwFp = getHardwareFingerprintFromRequest(req);
     const { rpID, origin } = getWebAuthnRpDetails(req);
@@ -54,7 +58,7 @@ export async function POST(req: NextRequest) {
     // Read unified or legacy challenge cookie
     const rawChallengeCookie =
       req.cookies.get("santa_biometric_challenge")?.value ||
-      (mode === "register"
+      (effectiveMode === "register"
         ? req.cookies.get("santa_participant_reg_challenge")?.value
         : req.cookies.get("santa_participant_auth_challenge")?.value);
 
@@ -70,7 +74,7 @@ export async function POST(req: NextRequest) {
       ? rawChallengeCookie.split(":")[1]
       : rawChallengeCookie;
 
-    if (mode === "register") {
+    if (effectiveMode === "register") {
       // ----------------------------------------------------
       // REGISTRATION VERIFICATION
       // ----------------------------------------------------
@@ -231,4 +235,8 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Verification error.";
     return NextResponse.json({ success: false, error: message }, { status: 400 });
   }
+}
+
+export async function POST(req: NextRequest) {
+  return handleBiometricVerify(req);
 }
