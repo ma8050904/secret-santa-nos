@@ -5,7 +5,11 @@ import { checkDistributedRateLimit, resetDistributedRateLimit } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
+    const ip =
+      req.headers.get("cf-connecting-ip") ||
+      req.headers.get("x-real-ip") ||
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "127.0.0.1";
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
