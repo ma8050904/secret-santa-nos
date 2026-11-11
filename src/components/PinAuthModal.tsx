@@ -255,10 +255,12 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         if (
           rawMsg.includes("invalid characters") ||
           rawMsg.includes("DOMException") ||
+          rawMsg.includes("pattern") ||
+          rawMsg.includes("match") ||
           rawMsg.includes("atob") ||
           rawMsg.includes("failed to execute")
         ) {
-          setError("Biometric setup issue. Please enter your 4-digit PIN instead.");
+          setError("Biometric prompt skipped. Please enter your 4-digit PIN below.");
         } else {
           setError(err?.message || "Biometric verification failed. Please enter your 4-digit PIN.");
         }
