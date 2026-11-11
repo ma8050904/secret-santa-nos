@@ -42,6 +42,9 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   );
   const isUnclaimed = !isPasskeyAccount && !isPinOnlyAccount;
 
+  // Track platform biometric hardware availability (Face ID / Touch ID / Windows Hello)
+  const [hasHardwareBiometrics, setHasHardwareBiometrics] = useState<boolean | null>(null);
+
   // Active view:
   // - "biometric": Shows pulsing Touch/Face ID and triggers WebAuthn prompt
   // - "pin": Direct 4-digit PIN input field
@@ -58,6 +61,43 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
   const pinInputRef = useRef<HTMLInputElement | null>(null);
   const hasTriggeredBiometricRef = useRef(false);
+
+  // Check hardware biometric availability on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function checkPlatformBiometrics() {
+      if (
+        typeof window !== "undefined" &&
+        window.PublicKeyCredential &&
+        typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
+      ) {
+        try {
+          const available = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+          if (isMounted) {
+            setHasHardwareBiometrics(Boolean(available));
+            if (!available && isUnclaimed) {
+              // Only fallback to PIN if device lacks biometric hardware
+              setActiveView("pin");
+            }
+          }
+        } catch {
+          if (isMounted) {
+            setHasHardwareBiometrics(false);
+            if (isUnclaimed) setActiveView("pin");
+          }
+        }
+      } else {
+        if (isMounted) {
+          setHasHardwareBiometrics(false);
+          if (isUnclaimed) setActiveView("pin");
+        }
+      }
+    }
+    checkPlatformBiometrics();
+    return () => {
+      isMounted = false;
+    };
+  }, [isUnclaimed]);
 
   // Auto-focus PIN input whenever PIN view is active
   useEffect(() => {
@@ -95,10 +135,28 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       browserSupportsWebAuthn();
 
     if (!isSupported) {
-      // Instant silent auto-fallback directly to PIN
-      setActiveView("pin");
-      setError(null);
+      if (isUnclaimed || isPinOnlyAccount) {
+        setActiveView("pin");
+        setError(null);
+      } else {
+        setError("Face ID / Touch ID verification is required to unlock this profile.");
+      }
       return;
+    }
+
+    let isPlatformAvailable = hasHardwareBiometrics;
+    if (
+      isPlatformAvailable === null &&
+      typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
+    ) {
+      try {
+        isPlatformAvailable = Boolean(
+          await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        );
+        setHasHardwareBiometrics(isPlatformAvailable);
+      } catch {
+        isPlatformAvailable = false;
+      }
     }
 
     setIsSubmitting(true);
@@ -135,9 +193,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         }
 
         if (!optRes.ok || !optData.success || !optData.options) {
-          // Silent fallback to PIN
-          setActiveView("pin");
-          setError(null);
+          setError(optData.error || "Failed to initialize Face ID / Touch ID authentication. Please try again.");
           setIsSubmitting(false);
           return;
         }
@@ -146,9 +202,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         try {
           assertionResponse = await startAuthentication({ optionsJSON: optData.options });
         } catch {
-          // Cancelled, timed out, or uncompleted -> silent redirect to PIN
-          setActiveView("pin");
-          setError(null);
+          // Passkey authentication cancelled or timed out -> require retry, DO NOT switch to PIN
+          setError("Touch ID / Face ID verification is required to unlock this profile. Please tap below to retry.");
           setIsSubmitting(false);
           return;
         }
@@ -180,9 +235,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         }
 
         if (!verifyRes.ok || !verifyData.success) {
-          // Verification failed -> fallback to PIN cleanly
-          setActiveView("pin");
-          setError(null);
+          setError(verifyData.error || "Touch ID / Face ID verification failed. Please try again.");
           setIsSubmitting(false);
           return;
         }
@@ -224,15 +277,18 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         }
 
         if (!optRes.ok || !optData.success || !optData.options) {
-          // Account already claimed or options failed
           if (optRes.status === 403) {
             setIsDeviceBlocked(true);
             setError(optData.error || "This profile has already been claimed. Please authenticate with the original Passkey or PIN.");
             setIsSubmitting(false);
             return;
           }
-          setActiveView("pin");
-          setError(null);
+          if (isPlatformAvailable) {
+            setError(optData.error || "Failed to initialize Face ID / Touch ID setup. Please tap below to retry.");
+          } else {
+            setActiveView("pin");
+            setError(null);
+          }
           setIsSubmitting(false);
           return;
         }
@@ -242,7 +298,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
           attestationResponse = await startRegistration({ optionsJSON: optData.options });
         } catch (err: any) {
           // CRITICAL SECURITY CATCH BLOCK:
-          // Check for InvalidStateError:
+          // 1. Check for InvalidStateError:
           // W3C WebAuthn spec: Thrown when an excludeCredentials entry matches an authenticator credential on this device!
           // This proves this phone already has a Passkey for another student on this website!
           if (err?.name === "InvalidStateError") {
@@ -252,7 +308,15 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
             return;
           }
 
-          // User clicked cancel or device refused -> instant silent fallback to PIN
+          // 2. User clicked Cancel, timed out, or refused prompt on a capable device:
+          if (isPlatformAvailable) {
+            // NEVER switch to PIN!
+            setError("Face ID / Touch ID verification is mandatory on this device to ensure one profile per student. Please tap below to verify with Face ID / Touch ID.");
+            setIsSubmitting(false);
+            return;
+          }
+
+          // 3. ONLY if device lacks platform biometrics: fallback to PIN
           setActiveView("pin");
           setError(null);
           setIsSubmitting(false);
@@ -292,8 +356,12 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
             setIsSubmitting(false);
             return;
           }
-          setActiveView("pin");
-          setError(null);
+          if (isPlatformAvailable) {
+            setError(verifyData.error || "Biometric registration failed. Please tap below to retry.");
+          } else {
+            setActiveView("pin");
+            setError(null);
+          }
           setIsSubmitting(false);
           return;
         }
@@ -310,12 +378,23 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         });
       }
     } catch {
-      // Any uncaught error -> clean silent fallback to PIN
-      setActiveView("pin");
-      setError(null);
+      if (isPlatformAvailable) {
+        setError("Face ID / Touch ID verification is mandatory on this device to ensure one profile per student. Please tap below to verify with Face ID / Touch ID.");
+      } else {
+        setActiveView("pin");
+        setError(null);
+      }
       setIsSubmitting(false);
     }
-  }, [isPasskeyAccount, participant, onSuccess]);
+  }, [
+    isPasskeyAccount,
+    isUnclaimed,
+    isPinOnlyAccount,
+    hasHardwareBiometrics,
+    participant,
+    onSuccess,
+    onDeviceBound,
+  ]);
 
   // ZERO-CLICK AUTO-TRIGGER ON MODAL OPEN
   useEffect(() => {
@@ -326,7 +405,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   }, [activeView, executeBiometricFlow]);
 
   // --------------------------------------------------------------------------
-  // PIN Submission (First-Time PIN Setup OR Returning PIN Verification)
+  // PIN Submission (Only allowed for devices without platform biometrics or returning PIN accounts)
   // --------------------------------------------------------------------------
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -444,7 +523,7 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
               </h3>
               <p className="mt-3 text-xs text-red-200/90 leading-relaxed bg-red-950/60 p-3.5 rounded-xl border border-red-500/30">
                 {error ||
-                  "This physical device is officially registered to another participant. Multiple accounts on one device are not permitted."}
+                  "This device is already registered to another participant via Face ID / Touch ID. You cannot unlock or claim multiple profiles on the same device."}
               </p>
               <div className="mt-6">
                 <button
@@ -474,17 +553,27 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
               {/* Sub-header instructions */}
               <p className="mt-1 text-xs text-emerald-200/70">
                 {activeView === "biometric"
-                  ? "Scanning Face ID / Touch ID..."
+                  ? isUnclaimed
+                    ? "Verify Face ID / Touch ID to secure your profile"
+                    : "Scanning Face ID / Touch ID..."
                   : isUnclaimed
                   ? "Create your personal Secret PIN"
                   : "Enter your personal 4-digit PIN"}
               </p>
 
               {/* ===============================================================
-                  VIEW 1: BIOMETRIC SCANNING (Auto-Triggered on Mount)
+                  VIEW 1: BIOMETRIC SCANNING (Mandatory on Capable Hardware)
                  =============================================================== */}
               {activeView === "biometric" && (
                 <div className="mt-6 space-y-4">
+                  {/* Warning / Retry Message Banner */}
+                  {error && (
+                    <div className="rounded-xl border border-amber-500/40 bg-amber-950/80 p-3 text-center text-xs text-amber-200 flex items-center justify-center gap-2 leading-relaxed">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+
                   <div className="py-2">
                     <button
                       type="button"
@@ -493,26 +582,28 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
                       className="group flex w-full items-center justify-center gap-2.5 rounded-2xl border border-amber-400/60 bg-gradient-to-r from-emerald-800 via-teal-800 to-emerald-900 py-3.5 text-sm font-bold text-white shadow-[0_4px_20px_rgba(16,185,129,0.3)] transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 cursor-pointer"
                     >
                       <Fingerprint className="h-5 w-5 text-amber-300" />
-                      <span>{isSubmitting ? "Prompting Biometrics..." : "Tap for Face ID / Touch ID"}</span>
+                      <span>{isSubmitting ? "Prompting Biometrics..." : "Verify with Face ID / Touch ID"}</span>
                     </button>
                   </div>
 
-                  {/* Instant Manual Fallback link */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setError(null);
-                      setActiveView("pin");
-                    }}
-                    className="text-xs font-semibold text-emerald-300/80 hover:text-amber-200 transition-colors underline underline-offset-4 cursor-pointer"
-                  >
-                    Enter PIN instead →
-                  </button>
+                  {/* Manual PIN Fallback link - ONLY visible when device LACKS hardware biometrics AND is not a passkey account */}
+                  {hasHardwareBiometrics === false && !isPasskeyAccount && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setActiveView("pin");
+                      }}
+                      className="text-xs font-semibold text-emerald-300/80 hover:text-amber-200 transition-colors underline underline-offset-4 cursor-pointer"
+                    >
+                      Enter PIN instead →
+                    </button>
+                  )}
                 </div>
               )}
 
               {/* ===============================================================
-                  VIEW 2: DIRECT PIN FORM (Auto-Focused & Instant)
+                  VIEW 2: DIRECT PIN FORM (Only for Hardware Without Biometrics or PIN Accounts)
                  =============================================================== */}
               {activeView === "pin" && (
                 <>
@@ -568,8 +659,8 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
                       )}
                     </button>
 
-                    {/* Secondary option to try Face ID / Touch ID if supported */}
-                    {!isPinOnlyAccount && (
+                    {/* Option to try Face ID / Touch ID if hardware biometrics become available */}
+                    {hasHardwareBiometrics && (
                       <div className="pt-1 text-center">
                         <button
                           type="button"
