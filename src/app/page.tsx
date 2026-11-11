@@ -480,6 +480,17 @@ function SecretSantaApp() {
           participant={selectedForAuth}
           onClose={() => setSelectedForAuth(null)}
           onSuccess={handleAuthSuccess}
+          onDeviceBound={(bound) => {
+            setBoundDeviceUser(bound);
+            setStoredBoundParticipant(bound);
+            lockedUserRef.current = bound;
+            setSelectedForAuth(null);
+            showToast({
+              title: "الجهاز مقفل بحساب آخر",
+              message: `هذا الجهاز مرتبط رسمياً بحساب ${bound.name}. يمنع فتح أو تسجيل أي حساب آخر.`,
+              type: "error",
+            });
+          }}
         />
       )}
 

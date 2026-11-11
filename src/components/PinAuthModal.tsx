@@ -23,12 +23,14 @@ interface PinAuthModalProps {
     recipientName?: string;
     isNewRegistration?: boolean;
   }) => void;
+  onDeviceBound?: (bound: { id: string; name: string }) => void;
 }
 
 export const PinAuthModal: React.FC<PinAuthModalProps> = ({
   participant,
   onClose,
   onSuccess,
+  onDeviceBound,
 }) => {
   // Determine if participant is already established with PIN-only (no passkey)
   const isPasskeyAccount = Boolean(
@@ -119,9 +121,15 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         const optData = await optRes.json();
 
         // If device is permanently locked to another user, show lock screen
-        if (optRes.status === 403 && optData.error?.includes("officially registered to")) {
+        if (optRes.status === 403 || optData.code === "DEVICE_ALREADY_BOUND" || optData.boundParticipantId) {
+          if (optData.boundParticipantId) {
+            onDeviceBound?.({
+              id: optData.boundParticipantId,
+              name: optData.boundParticipantName || "حسابك السابق",
+            });
+          }
           setIsDeviceBlocked(true);
-          setError(optData.error);
+          setError(optData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
           setIsSubmitting(false);
           return;
         }
@@ -158,9 +166,15 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         });
 
         const verifyData = await verifyRes.json();
-        if (verifyRes.status === 403 && verifyData.error?.includes("officially registered to")) {
+        if (verifyRes.status === 403 || verifyData.code === "DEVICE_ALREADY_BOUND" || verifyData.boundParticipantId) {
+          if (verifyData.boundParticipantId) {
+            onDeviceBound?.({
+              id: verifyData.boundParticipantId,
+              name: verifyData.boundParticipantName || "حسابك السابق",
+            });
+          }
           setIsDeviceBlocked(true);
-          setError(verifyData.error);
+          setError(verifyData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
           setIsSubmitting(false);
           return;
         }
@@ -196,15 +210,27 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
 
         const optData = await optRes.json();
 
-        if (optRes.status === 403 && optData.error?.includes("officially registered to")) {
+        if (optRes.status === 403 || optData.code === "DEVICE_ALREADY_BOUND" || optData.boundParticipantId) {
+          if (optData.boundParticipantId) {
+            onDeviceBound?.({
+              id: optData.boundParticipantId,
+              name: optData.boundParticipantName || "حسابك السابق",
+            });
+          }
           setIsDeviceBlocked(true);
-          setError(optData.error);
+          setError(optData.error || "هذا الجهاز مسجل به حساب آخر مسبقاً.");
           setIsSubmitting(false);
           return;
         }
 
         if (!optRes.ok || !optData.success || !optData.options) {
-          // Account already claimed or options failed -> silent fallback to PIN
+          // Account already claimed or options failed
+          if (optRes.status === 403) {
+            setIsDeviceBlocked(true);
+            setError(optData.error || "هذا الحساب مغلق ومسجل مسبقاً ولا يمكن تسجيله مرة أخرى.");
+            setIsSubmitting(false);
+            return;
+          }
           setActiveView("pin");
           setError(null);
           setIsSubmitting(false);
@@ -214,7 +240,18 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         let attestationResponse;
         try {
           attestationResponse = await startRegistration({ optionsJSON: optData.options });
-        } catch {
+        } catch (err: any) {
+          // CRITICAL SECURITY CATCH BLOCK:
+          // Check for InvalidStateError:
+          // W3C WebAuthn spec: Thrown when an excludeCredentials entry matches an authenticator credential on this device!
+          // This proves this phone already has a Passkey for another student on this website!
+          if (err?.name === "InvalidStateError") {
+            setIsDeviceBlocked(true);
+            setError("هذا الجهاز مسجل به حساب مسبقاً عبر البصمة (Face ID / Touch ID). يمنع فتح أو تسجيل أي حساب آخر من نفس الجهاز.");
+            setIsSubmitting(false);
+            return;
+          }
+
           // User clicked cancel or device refused -> instant silent fallback to PIN
           setActiveView("pin");
           setError(null);
@@ -235,14 +272,26 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
         });
 
         const verifyData = await verifyRes.json();
-        if (verifyRes.status === 403 && verifyData.error?.includes("officially registered to")) {
+        if (verifyRes.status === 403 || verifyData.code === "DEVICE_ALREADY_BOUND" || verifyData.boundParticipantId) {
+          if (verifyData.boundParticipantId) {
+            onDeviceBound?.({
+              id: verifyData.boundParticipantId,
+              name: verifyData.boundParticipantName || "حسابك السابق",
+            });
+          }
           setIsDeviceBlocked(true);
-          setError(verifyData.error);
+          setError(verifyData.error || "هذا الجهاز مرتبط بحساب آخر ولا يمكن فتح اسم إضافي");
           setIsSubmitting(false);
           return;
         }
 
         if (!verifyRes.ok || !verifyData.success) {
+          if (verifyRes.status === 403) {
+            setIsDeviceBlocked(true);
+            setError(verifyData.error || "تم حظر التسجيل المتعدد.");
+            setIsSubmitting(false);
+            return;
+          }
           setActiveView("pin");
           setError(null);
           setIsSubmitting(false);
@@ -318,7 +367,13 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({
       const data = await res.json();
 
       // Device Binding Violation (403: Hardware / Device bound to someone else)
-      if (res.status === 403) {
+      if (res.status === 403 || data.code === "DEVICE_ALREADY_BOUND" || data.boundParticipantId) {
+        if (data.boundParticipantId) {
+          onDeviceBound?.({
+            id: data.boundParticipantId,
+            name: data.boundParticipantName || "حسابك السابق",
+          });
+        }
         setError(
           data.error ||
             "This physical device is already registered to another participant. Each student must use their own personal device."

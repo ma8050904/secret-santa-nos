@@ -1033,8 +1033,13 @@ export async function authenticateOrRegisterPin(
   }
 
   // CASE 2: Participant is establishing their PIN for the FIRST TIME
-  // Section 1.1: If participant is already claimed via Passkey or PIN, new PIN creation is prohibited
-  if (existingRuntime?.passkeyCredentialId || existingRuntime?.pinHash) {
+  // Section 1.1: If participant is already claimed via Passkey or PIN, or revealed, new PIN creation is prohibited
+  if (
+    existingRuntime?.passkeyCredentialId ||
+    existingRuntime?.pinHash ||
+    existingRuntime?.isRevealed ||
+    participant.isRevealed
+  ) {
     return {
       success: false,
       error: "This participant profile has already been claimed and locked. Overwriting PIN or registration is strictly prohibited.",

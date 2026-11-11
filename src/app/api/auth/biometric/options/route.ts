@@ -86,8 +86,8 @@ export async function handleBiometricOptions(
       );
     }
 
-    // Section 1.1: If participant is already claimed, WebAuthn Registration is strictly forbidden
-    if (forcedMode === "register" && status.isClaimed) {
+    // Section 1.1: If participant is already claimed or revealed, WebAuthn Registration is strictly forbidden
+    if (forcedMode === "register" && (status.isClaimed || status.isRevealed)) {
       return NextResponse.json(
         {
           success: false,
@@ -156,8 +156,8 @@ export async function handleBiometricOptions(
       }
     } else {
       // First-time registration with Silicon-level Hardware Exclusion
-      // Section 1.1: Confirm participant is not claimed via PIN either
-      if (status.isClaimed) {
+      // Section 1.1: Confirm participant is not claimed via PIN either or already revealed
+      if (status.isClaimed || status.isRevealed) {
         return NextResponse.json(
           {
             success: false,
@@ -167,8 +167,11 @@ export async function handleBiometricOptions(
         );
       }
 
+      const { getPostgresAllPasskeyCredentialIds } = await import("@/lib/db");
+      const pgCredentials = await getPostgresAllPasskeyCredentialIds();
       const allCredentials = await getAllRegisteredPasskeyCredentials();
-      const validCredentials = allCredentials.filter((id) => isValidPasskeyCredentialId(id));
+      const combined = Array.from(new Set([...pgCredentials, ...allCredentials]));
+      const validCredentials = combined.filter((id) => isValidPasskeyCredentialId(id));
       const safeUserName = `${status.name.replace(/[^\w]/g, "").toLowerCase() || "student"}_${participantId.slice(0, 8)}@secretsanta.holiday`;
 
       const options = await generateRegistrationOptions({

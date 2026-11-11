@@ -109,8 +109,8 @@ async function runTests() {
     assert(status.isClaimed === true, "Participant p33 is identified as isClaimed: true");
     assert(status.hasPin === true, "Participant p33 hasPin is verified true");
 
-    // Attempting to overwrite PIN on already claimed participant
-    const overwriteAttempt = await authenticateOrRegisterPin("p33", "9999");
+    // Attempting incorrect PIN on already claimed participant
+    const overwriteAttempt = await authenticateOrRegisterPin("p33", "0000");
     assert(
       overwriteAttempt.success === false &&
         (overwriteAttempt.error?.includes("Incorrect PIN") || overwriteAttempt.error?.includes("already been claimed")),

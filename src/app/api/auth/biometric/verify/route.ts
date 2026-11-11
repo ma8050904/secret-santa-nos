@@ -125,13 +125,18 @@ export async function handleBiometricVerify(
       if (clientResponse.id) {
         const owner = await getPasskeyCredentialOwner(clientResponse.id);
         if (owner && owner.participantId !== participantId) {
-          return NextResponse.json(
+          const res = NextResponse.json(
             {
               success: false,
-              error: `Cross-participant credential reuse blocked: this passkey is already registered to ${owner.participantName}.`,
+              error: `هذا الجهاز مرتبط مسبقاً بحساب ${owner.participantName}، لا يمكنك فتح أو تسجيل اسم آخر`,
+              boundParticipantId: owner.participantId,
+              boundParticipantName: owner.participantName,
+              code: "DEVICE_ALREADY_BOUND",
             },
             { status: 403 }
           );
+          setBoundParticipantCookie(res, owner.participantId);
+          return res;
         }
       }
 
@@ -218,14 +223,22 @@ export async function handleBiometricVerify(
 
       // Cross-Participant Isolation Gate:
       // If client attempts to authenticate using a credential ID that does not belong to this participant, reject with HTTP 403
-      if (clientResponse.id && status.passkeyCredentialId && clientResponse.id !== status.passkeyCredentialId) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Cross-participant credential reuse rejected. This passkey does not belong to this participant.",
-          },
-          { status: 403 }
-        );
+      if (clientResponse.id) {
+        const owner = await getPasskeyCredentialOwner(clientResponse.id);
+        if (owner && owner.participantId !== participantId) {
+          const res = NextResponse.json(
+            {
+              success: false,
+              error: `هذا الجهاز مرتبط مسبقاً بحساب ${owner.participantName}، لا يمكنك فتح أو تسجيل اسم آخر`,
+              boundParticipantId: owner.participantId,
+              boundParticipantName: owner.participantName,
+              code: "DEVICE_ALREADY_BOUND",
+            },
+            { status: 403 }
+          );
+          setBoundParticipantCookie(res, owner.participantId);
+          return res;
+        }
       }
 
       const verification = await verifyAuthenticationResponse({
