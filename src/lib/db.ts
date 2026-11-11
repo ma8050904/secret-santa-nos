@@ -297,29 +297,9 @@ export async function atomicBindDeviceToParticipant(
       };
     }
 
-    // 2. Check existing hardware fingerprint binding
-    // Apple iOS devices share identical screen/WebGL hardware profiles across all users of the same iPhone model.
-    // To prevent false-positive lockouts between different students owning identical phone models,
-    // we match against device_id when present, or hardware_fingerprint when querying directly.
-    if (cleanHwFp && cleanHwFp.length > 5) {
-      const existingHwRows = cleanDeviceId
-        ? await sql`
-            SELECT participant_id, participant_name FROM hardware_bindings
-            WHERE hardware_fingerprint = ${cleanHwFp} AND device_id = ${cleanDeviceId} AND reset_version >= ${resetVersion};
-          `
-        : await sql`
-            SELECT participant_id, participant_name FROM hardware_bindings
-            WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion};
-          `;
-      if (existingHwRows.length > 0 && existingHwRows[0].participant_id !== participantId) {
-        return {
-          success: false,
-          error: `This physical device is already registered to ${existingHwRows[0].participant_name}. Accessing multiple accounts from the same physical device is strictly forbidden.`,
-        };
-      }
-    }
-
-    // 3. Atomic Upsert for Device Binding with Participant Ownership Lock
+    // 2. Atomic Upsert for Device Binding with Participant Ownership Lock
+    // Strictly binds by unique client deviceId. Never creates a lock on hardware_fingerprint
+    // to prevent collisions between different students owning identical iPhone models.
     const devRows = await sql`
       INSERT INTO device_bindings (
         device_id, participant_id, participant_name, hardware_fingerprint,
@@ -343,29 +323,6 @@ export async function atomicBindDeviceToParticipant(
         success: false,
         error: "Device binding conflict: This device is already bound to another participant.",
       };
-    }
-
-    // 4. Atomic Upsert for Hardware Binding with Participant Ownership Lock
-    if (cleanHwFp && cleanHwFp.length > 5) {
-      const hwRows = await sql`
-        INSERT INTO hardware_bindings (
-          hardware_fingerprint, participant_id, participant_name, device_id, bound_at, reset_version
-        )
-        VALUES (
-          ${cleanHwFp}, ${participantId}, ${participantName}, ${cleanDeviceId}, ${now}, ${resetVersion}
-        )
-        ON CONFLICT (hardware_fingerprint) DO UPDATE
-        SET
-          device_id = EXCLUDED.device_id
-        WHERE hardware_bindings.participant_id = EXCLUDED.participant_id
-        RETURNING participant_id;
-      `;
-      if (!hwRows || hwRows.length === 0) {
-        return {
-          success: false,
-          error: "Hardware binding conflict: This physical device is already bound to another participant.",
-        };
-      }
     }
 
     return { success: true };
@@ -398,7 +355,8 @@ export async function getPostgresDeviceOrHardwareBinding(
   const cleanHwFp = hwFp?.trim().toLowerCase();
 
   try {
-    // 1. Check by Device ID
+    // Strictly match by unique client deviceId.
+    // Never match by hardware_fingerprint alone to eliminate collisions between students owning identical iPhone models.
     if (cleanDeviceId) {
       const devRows = await sql`
         SELECT participant_id, participant_name, device_id, hardware_fingerprint
@@ -412,25 +370,6 @@ export async function getPostgresDeviceOrHardwareBinding(
           participantName: String(devRows[0].participant_name),
           deviceId: String(devRows[0].device_id),
           hardwareFingerprint: devRows[0].hardware_fingerprint ? String(devRows[0].hardware_fingerprint) : undefined,
-        };
-      }
-    }
-
-    // 2. Check by Physical Hardware Fingerprint
-    // Matches across Private/Incognito browsing on the same physical hardware
-    if (cleanHwFp && cleanHwFp.length > 5) {
-      const hwRows = await sql`
-        SELECT participant_id, participant_name, device_id, hardware_fingerprint
-        FROM hardware_bindings
-        WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
-        LIMIT 1;
-      `;
-      if (hwRows && hwRows.length > 0) {
-        return {
-          participantId: String(hwRows[0].participant_id),
-          participantName: String(hwRows[0].participant_name),
-          deviceId: String(hwRows[0].device_id),
-          hardwareFingerprint: String(hwRows[0].hardware_fingerprint),
         };
       }
     }

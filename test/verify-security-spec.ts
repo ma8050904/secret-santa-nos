@@ -121,21 +121,28 @@ async function runTests() {
   }
 
   // --------------------------------------------------------------------------
-  // TEST 4: Hardware Fingerprint Matching Across Incognito Tabs
+  // TEST 4: No Collision Between Identical iPhone Models Sharing Hardware Fingerprint
   // --------------------------------------------------------------------------
   try {
-    // Mohammad's hardware fingerprint in DB
-    const knownFp = "hw_v3_956a556d2039d6b5a1511ebc4295077c785f2482eb12b9f608b0394cd2cd55e8";
-    // Simulated new UUID from Incognito tab
-    const incognitoNewDeviceId = "incognito-random-uuid-9999";
+    // Both Student A and Student B have identical iPhone 13s generating the exact same hardware_fingerprint
+    const sharedIPhoneHwFp = "hw_v3_956a556d2039d6b5a1511ebc4295077c785f2482eb12b9f608b0394cd2cd55e8";
 
-    const binding = await getDeviceOrHardwareBinding(incognitoNewDeviceId, knownFp);
+    // Student A's bound deviceId: '5919a1b9-89fc-45fb-862a-27b823ea71c8'
+    const studentADeviceBinding = await getDeviceOrHardwareBinding("5919a1b9-89fc-45fb-862a-27b823ea71c8", sharedIPhoneHwFp);
     assert(
-      binding !== null && binding.participantId === "p33",
-      "Incognito window with matching hardware fingerprint is correctly identified as p33"
+      studentADeviceBinding !== null && studentADeviceBinding.participantId === "p33",
+      "Student A is correctly recognized by their unique device_id"
+    );
+
+    // Student B has a different device_id, but the exact same iPhone hardware_fingerprint
+    const studentBNewDeviceId = "student-b-iphone-uuid-12345";
+    const studentBDeviceBinding = await getDeviceOrHardwareBinding(studentBNewDeviceId, sharedIPhoneHwFp);
+    assert(
+      studentBDeviceBinding === null,
+      "Student B with a new device_id is NOT falsely bound to Student A despite identical iPhone hardware fingerprint"
     );
   } catch (err) {
-    assert(false, "Test 4 Incognito Hardware Fingerprint exception", String(err));
+    assert(false, "Test 4 Hardware Fingerprint collision test exception", String(err));
   }
 
   // --------------------------------------------------------------------------

@@ -1672,98 +1672,8 @@ export async function getDeviceBinding(
  * Functions across Normal, Private, and Incognito browsing windows on the exact same physical device.
  */
 export async function getHardwareDeviceBinding(hwFp: string): Promise<DeviceBindingRecord | null> {
-  if (!hwFp || typeof hwFp !== "string") return null;
-  const cleanFp = hwFp.trim().toLowerCase();
-
-  let resetVersion = 1;
-  try {
-    const state = await getEventState();
-    resetVersion = state.deviceResetVersion || 1;
-  } catch {
-    // fallback
-  }
-
-  // Check in-memory cache
-  if (hardwareBindingCache.has(cleanFp)) {
-    const cached = hardwareBindingCache.get(cleanFp)!;
-    if (cached.resetVersion && cached.resetVersion < resetVersion) {
-      hardwareBindingCache.delete(cleanFp);
-      return null;
-    }
-    return cached;
-  }
-
-  // 0. Primary: PostgreSQL Transactional Store
-  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
-  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
-    try {
-      const pg = await getPostgresDeviceOrHardwareBinding("", cleanFp, resetVersion);
-      if (pg) {
-        const record: DeviceBindingRecord = {
-          deviceId: pg.deviceId,
-          hardwareFingerprint: pg.hardwareFingerprint,
-          participantId: pg.participantId,
-          participantName: pg.participantName,
-          boundAt: new Date().toISOString(),
-          lastUsedAt: new Date().toISOString(),
-          ip: "postgres",
-          userAgent: "",
-          deviceModel: "Personal Device",
-          os: "Operating System",
-          browser: "Web Browser",
-          summary: "Bound Physical Device",
-          hasRevealed: false,
-          revealedAt: null,
-          resetVersion,
-        };
-        hardwareBindingCache.set(cleanFp, record);
-        return record;
-      }
-    } catch (pgErr) {
-      console.warn("Notice: PostgreSQL hardware fetch attempt:", pgErr);
-    }
-  }
-
-  // 1. Check Vercel Private Blob
-  if (isBlobEnabled()) {
-    try {
-      const url = `${KNOWN_BLOB_BASE}/v7/hardware_devices/${cleanFp}.json`;
-      const res: any = await get(url, {
-        access: "private",
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-
-      if (res && res.stream) {
-        const text = await new Response(res.stream).text();
-        const parsed: DeviceBindingRecord = JSON.parse(text);
-        if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
-          return null;
-        }
-        hardwareBindingCache.set(cleanFp, parsed);
-        return parsed;
-      }
-    } catch {
-      // ignore miss
-    }
-  }
-
-  // 2. Check local disk
-  try {
-    const dir = getLocalHardwareDeviceDir();
-    const localFile = path.join(dir, `${cleanFp}.json`);
-    if (fs.existsSync(localFile)) {
-      const data = fs.readFileSync(localFile, "utf-8");
-      const parsed: DeviceBindingRecord = JSON.parse(data);
-      if (parsed.resetVersion && parsed.resetVersion < resetVersion) {
-        return null;
-      }
-      hardwareBindingCache.set(cleanFp, parsed);
-      return parsed;
-    }
-  } catch {
-    // ignore
-  }
-
+  // Never resolve or bind devices by hardware_fingerprint alone
+  // to avoid false collisions between different students owning identical iPhone models.
   return null;
 }
 
@@ -1806,17 +1716,7 @@ export async function getDeviceOrHardwareBinding(
     }
   }
 
-  const byDevice = await getDeviceBinding(deviceId);
-  if (byDevice) {
-    return byDevice;
-  }
-  if (hwFp && hwFp.trim().length > 5) {
-    const byHw = await getHardwareDeviceBinding(hwFp);
-    if (byHw) {
-      return byHw;
-    }
-  }
-  return null;
+  return getDeviceBinding(deviceId);
 }
 
 /**
@@ -1931,17 +1831,6 @@ export async function bindDeviceToParticipant(
       success: false,
       error: `This device is officially registered to ${existing.participantName}.`,
     };
-  }
-
-  // Check existing hardware binding
-  if (cleanHwFp && cleanHwFp.length > 5) {
-    const existingHw = await getHardwareDeviceBinding(cleanHwFp);
-    if (existingHw && existingHw.participantId !== participantId) {
-      return {
-        success: false,
-        error: `This physical device is already registered to ${existingHw.participantName}. Accessing multiple accounts from the same physical device is strictly forbidden.`,
-      };
-    }
   }
 
   const parsed = parseUserAgentDetails(meta?.userAgent || existing?.userAgent);
