@@ -10,7 +10,7 @@ import {
   isValidPasskeyCredentialId,
 } from "@/lib/storage";
 import { getWebAuthnRpDetails } from "@/lib/admin-auth";
-import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest } from "@/lib/session";
+import { getDeviceIdFromRequest, getHardwareFingerprintFromRequest, getSessionFromRequest } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +41,18 @@ export async function handleBiometricOptions(
           error: `This device is officially registered to ${existingBinding.participantName}. Accessing other accounts from this device is not permitted.`,
           boundParticipantName: existingBinding.participantName,
           boundParticipantId: existingBinding.participantId,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Prevent switching participant identity within an existing authenticated session (Session Lock)
+    const existingSession = getSessionFromRequest(req);
+    if (existingSession && existingSession.participantId !== participantId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "This session is locked to an authenticated participant account. Switching participants is not permitted.",
         },
         { status: 403 }
       );

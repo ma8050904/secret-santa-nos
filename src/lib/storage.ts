@@ -217,6 +217,22 @@ const KNOWN_BLOB_BASE = "https://ygkog8lebahiid0k.private.blob.vercel-storage.co
 const KNOWN_BLOB_URL =
   process.env.BLOB_URL || `${KNOWN_BLOB_BASE}/secret-santa-event.json`;
 
+/**
+ * Determines whether to use Vercel Blob.
+ * When Neon PostgreSQL is configured and active, Vercel Blob operations are COMPLETELY bypassed
+ * to eliminate 403 Forbidden errors caused by Vercel free-tier 2,000 monthly operation limits.
+ */
+function isBlobEnabled(): boolean {
+  if (process.env.STORAGE_FILE_PATH) return false;
+  const hasPostgres = Boolean(
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_PRISMA_URL
+  );
+  if (hasPostgres) return false;
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
 let writeLock: Promise<void> = Promise.resolve();
 let activeResetCount = 0;
 
@@ -315,7 +331,7 @@ async function syncMarkers(force = false): Promise<void> {
   }
 
   // 1. Cloud Blob sync (only when not running in isolated local test mode)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const [revealedList, registeredList, passkeyList, credList] = await Promise.all([
         list({ prefix: "v7/revealed/", token: process.env.BLOB_READ_WRITE_TOKEN }),
@@ -456,7 +472,7 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
   }
 
   // 1. Try reading from Vercel Private Blob store if configured (and not running in isolated local test mode)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       let streamRes: any = null;
       try {
@@ -535,7 +551,7 @@ export async function getEventState(forceFresh = false): Promise<EventState> {
     return inMemoryStateCache;
   }
 
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  if (isBlobEnabled()) {
     throw new Error("Temporary storage connection error. Please refresh the page.");
   }
 
@@ -582,7 +598,7 @@ export async function saveEventState(state: EventState): Promise<void> {
     }
 
     // 1. Persist to Vercel Private Blob if configured (and not in isolated test mode)
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         await put("secret-santa-event.json", serialized, {
           access: "private",
@@ -648,7 +664,7 @@ export async function getParticipantRuntimeState(
   }
 
   // 1. Check dedicated Vercel Blob for this participant (if not in isolated test mode)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const url = `${KNOWN_BLOB_BASE}/v7/participants/${participantId}.json`;
       const res: any = await get(url, {
@@ -765,7 +781,7 @@ export async function saveParticipantRuntimeState(
   const serialized = JSON.stringify(state, null, 2);
 
   // 1. Persist isolated blob to Vercel Blob (if not in isolated test mode)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const promises: Promise<any>[] = [
         put(`v7/participants/${state.participantId}.json`, serialized, {
@@ -1195,6 +1211,16 @@ export async function registerParticipantBiometric(
     };
   }
 
+  // Cross-participant credential reuse block: verify this credential ID is not already owned by another participant
+  const { getPasskeyCredentialOwner } = await import("./db");
+  const existingOwner = await getPasskeyCredentialOwner(credential.id);
+  if (existingOwner && existingOwner.participantId !== participantId) {
+    return {
+      success: false,
+      error: `Cross-participant credential reuse blocked: this passkey is already registered to ${existingOwner.participantName}.`,
+    };
+  }
+
   let originalRecipient = "";
   try {
     if (!participant.encryptedRecipient) {
@@ -1474,10 +1500,9 @@ export async function getAdminSafeState(): Promise<AdminSafeState> {
     // ignore
   }
 
-  const provider =
-    process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH
-      ? "Vercel Private Blob (Encrypted)"
-      : "Local Filesystem (Encrypted JSON)";
+  const provider = isBlobEnabled()
+    ? "Vercel Private Blob (Encrypted)"
+    : "Neon PostgreSQL (Encrypted Transactional)";
 
   const devices = await getAllDeviceBindings();
   const deviceByParticipantId = new Map(devices.map((d) => [d.participantId, d]));
@@ -1582,7 +1607,7 @@ export async function getDeviceBinding(
   }
 
   // 1. Check Vercel Private Blob (if not in isolated test mode)
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const url = `${KNOWN_BLOB_BASE}/v7/devices/${cleanId}.json`;
       const res: any = await get(url, {
@@ -1681,7 +1706,7 @@ export async function getHardwareDeviceBinding(hwFp: string): Promise<DeviceBind
   }
 
   // 1. Check Vercel Private Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const url = `${KNOWN_BLOB_BASE}/v7/hardware_devices/${cleanFp}.json`;
       const res: any = await get(url, {
@@ -1939,7 +1964,7 @@ export async function bindDeviceToParticipant(
   const serialized = JSON.stringify(record, null, 2);
 
   // 1. Persist to Vercel Private Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const blobPromises = [
         put(`v7/devices/${cleanId}.json`, serialized, {
@@ -2018,7 +2043,7 @@ export async function clearDeviceBindingsForParticipant(
   }
 
   // 1. Cloud cleanup
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const pDevicesList = await list({
         prefix: `v7/participant_devices/${participantId}/`,
@@ -2076,7 +2101,7 @@ export async function clearDeviceBinding(deviceId: string): Promise<{ success: b
   const binding = deviceBindingCache.get(cleanId);
   deviceBindingCache.delete(cleanId);
 
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const urls: string[] = [`${KNOWN_BLOB_BASE}/v7/devices/${cleanId}.json`];
       if (binding?.participantId) {
@@ -2107,7 +2132,7 @@ export async function getAdminAuditLogs(): Promise<AdminAuditLogEntry[]> {
   if (auditLogsCache) return auditLogsCache;
 
   // 1. Try Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const url = `${KNOWN_BLOB_BASE}/${AUDIT_LOGS_BLOB_KEY}`;
       const res: any = await get(url, {
@@ -2159,7 +2184,7 @@ export async function recordAdminAuditLog(
   const serialized = JSON.stringify(logs, null, 2);
 
   // 1. Save to Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       await put(AUDIT_LOGS_BLOB_KEY, serialized, {
         access: "private",
@@ -2194,7 +2219,7 @@ export async function clearAdminAuditLogs(): Promise<{ success: boolean; cleared
   auditLogsCache = [];
   const emptySerialized = JSON.stringify([], null, 2);
 
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       await put(AUDIT_LOGS_BLOB_KEY, emptySerialized, {
         access: "private",
@@ -2271,7 +2296,7 @@ export async function recordDeviceReveal(
     }
   }
 
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       await put(`v7/devices/${cleanId}.json`, serialized, {
         access: "private",
@@ -2308,7 +2333,7 @@ export async function recordDeviceReveal(
  * Retrieves all registered device binding records with telemetry.
  */
 export async function getAllDeviceBindings(): Promise<DeviceBindingRecord[]> {
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const listRes = await list({
         prefix: "v7/devices/",
@@ -2364,7 +2389,7 @@ export async function getAllDeviceBindings(): Promise<DeviceBindingRecord[]> {
 }
 
 export async function getRegisteredDevicesCount(): Promise<number> {
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const listRes = await list({
         prefix: "v7/devices/",
@@ -2395,7 +2420,7 @@ export async function resetAllDeviceBindings(
   deviceBindingCache.clear();
 
   // 1. Clear in Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       for (const prefix of ["v7/devices/", "v7/participant_devices/"]) {
         const listRes = await list({
@@ -2485,7 +2510,7 @@ export async function fullEventReset(
 
     safeWriteBackup(backupBlobKey, backupSerialized);
 
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         await put(backupBlobKey, backupSerialized, {
           access: "private",
@@ -2540,7 +2565,7 @@ export async function fullEventReset(
     }
 
     // 6. Clear all device bindings and markers from Blob
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         for (const prefix of [
           "v7/devices/",
@@ -2734,7 +2759,7 @@ export async function resetSingleParticipant(
   lastMarkersSyncTimestamp = 0;
 
   // Clear Blob markers
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const markers = [
         `v7/revealed/${participantId}`,
@@ -2797,7 +2822,7 @@ export async function rerollSubgroup20(
   const backupBlobKey = `secret-santa-event.backup-pre-reroll-sub20-${timestamp}.json`;
   const backupSerialized = JSON.stringify(state, null, 2);
 
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       await put(backupBlobKey, backupSerialized, {
         access: "private",
@@ -2919,7 +2944,7 @@ export async function rerollSubgroup20(
   await saveEventState(state);
 
   // Clean dynamic blobs in Blob
-  if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+  if (isBlobEnabled()) {
     try {
       const vList = await list({ prefix: "v7/", token: process.env.BLOB_READ_WRITE_TOKEN });
       const urlsToDelete = vList.blobs
@@ -2973,7 +2998,7 @@ export async function regenerateFullDraw(
 
     safeWriteBackup(backupBlobKey, backupSerialized);
 
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         await put(backupBlobKey, backupSerialized, {
           access: "private",
@@ -3123,7 +3148,7 @@ export async function regenerateFullDraw(
     }
 
     // 7. Clean runtime blobs (devices, participant records, but preserve audit logs and admin passkeys)
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         let hasMore = true;
         let cursor: string | undefined = undefined;
@@ -3191,7 +3216,7 @@ export async function setDrawMode(
 
     safeWriteBackup(backupBlobKey, backupSerialized);
 
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         await put(backupBlobKey, backupSerialized, {
           access: "private",
@@ -3327,7 +3352,7 @@ export async function setDrawMode(
     }
 
     // Clear Blob markers and device locks
-    if (process.env.BLOB_READ_WRITE_TOKEN && !process.env.STORAGE_FILE_PATH) {
+    if (isBlobEnabled()) {
       try {
         for (const prefix of [
           "v7/devices/",

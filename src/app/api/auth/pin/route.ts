@@ -107,8 +107,8 @@ export async function POST(req: NextRequest) {
       deviceId,
     });
 
-    // Establish secure session cookie & persistent device cookie
-    setSessionCookie(response, participantId);
+    // Establish secure session cookie & persistent device cookie bound to this device
+    setSessionCookie(response, participantId, deviceId);
     setDeviceCookie(response, deviceId);
 
     return response;

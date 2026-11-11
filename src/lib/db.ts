@@ -53,7 +53,7 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       );
     `;
 
-    // 2. Participants table with encrypted credentials and passkeys
+    // 2. Participants table with encrypted credentials, unique cryptographic identities, and passkeys
     await sql`
       CREATE TABLE IF NOT EXISTS event_participants (
         id VARCHAR(32) PRIMARY KEY,
@@ -70,8 +70,21 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         passkey_public_key TEXT,
         passkey_counter BIGINT DEFAULT 0,
         passkey_registered_at TIMESTAMP WITH TIME ZONE,
+        security_identity_id VARCHAR(64),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `;
+
+    // Strict Unique Constraints on Cryptographic Credentials & Participant Security Identities
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_security_identity_id 
+      ON event_participants (security_identity_id) 
+      WHERE security_identity_id IS NOT NULL;
+    `;
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_passkey_credential_id 
+      ON event_participants (passkey_credential_id) 
+      WHERE passkey_credential_id IS NOT NULL;
     `;
 
     // 3. Device Bindings table with ATOMIC UNIQUE CONSTRAINTS:
@@ -285,11 +298,19 @@ export async function atomicBindDeviceToParticipant(
     }
 
     // 2. Check existing hardware fingerprint binding
+    // Apple iOS devices share identical screen/WebGL hardware profiles across all users of the same iPhone model.
+    // To prevent false-positive lockouts between different students owning identical phone models,
+    // we match against device_id when present, or hardware_fingerprint when querying directly.
     if (cleanHwFp && cleanHwFp.length > 5) {
-      const existingHwRows = await sql`
-        SELECT participant_id, participant_name FROM hardware_bindings
-        WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion};
-      `;
+      const existingHwRows = cleanDeviceId
+        ? await sql`
+            SELECT participant_id, participant_name FROM hardware_bindings
+            WHERE hardware_fingerprint = ${cleanHwFp} AND device_id = ${cleanDeviceId} AND reset_version >= ${resetVersion};
+          `
+        : await sql`
+            SELECT participant_id, participant_name FROM hardware_bindings
+            WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion};
+          `;
       if (existingHwRows.length > 0 && existingHwRows[0].participant_id !== participantId) {
         return {
           success: false,
@@ -395,14 +416,24 @@ export async function getPostgresDeviceOrHardwareBinding(
       }
     }
 
-    // 2. Check by Physical Hardware Fingerprint (crucial for Incognito / private mode / cookie wipe!)
+    // 2. Check by Physical Hardware Fingerprint
+    // Apple iOS devices share identical screen/WebGL hardware profiles across all users of the same iPhone model.
+    // To prevent false-positive lockouts between different students owning identical phone models,
+    // we match against device_id when present, or hardware_fingerprint when querying directly.
     if (cleanHwFp && cleanHwFp.length > 5) {
-      const hwRows = await sql`
-        SELECT participant_id, participant_name, device_id, hardware_fingerprint
-        FROM hardware_bindings
-        WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
-        LIMIT 1;
-      `;
+      const hwRows = cleanDeviceId
+        ? await sql`
+            SELECT participant_id, participant_name, device_id, hardware_fingerprint
+            FROM hardware_bindings
+            WHERE hardware_fingerprint = ${cleanHwFp} AND device_id = ${cleanDeviceId} AND reset_version >= ${resetVersion}
+            LIMIT 1;
+          `
+        : await sql`
+            SELECT participant_id, participant_name, device_id, hardware_fingerprint
+            FROM hardware_bindings
+            WHERE hardware_fingerprint = ${cleanHwFp} AND reset_version >= ${resetVersion}
+            LIMIT 1;
+          `;
       if (hwRows && hwRows.length > 0) {
         return {
           participantId: String(hwRows[0].participant_id),
@@ -518,23 +549,62 @@ export async function getPostgresEventState(): Promise<EventState | null> {
 
 /**
  * Persists an isolated participant's credentials and reveal state into PostgreSQL.
+ * Enforces strict cryptographic credential uniqueness across all participants.
  */
 export async function savePostgresParticipantState(state: any): Promise<boolean> {
   const sql = getDbClient();
   if (!sql) return false;
   try {
+    // 1. Strict Server-Enforced Credential Ownership Check:
+    // A WebAuthn passkey credential registered to Participant A can NEVER be registered or assigned to Participant B.
+    if (state.passkeyCredentialId) {
+      const cleanCredId = String(state.passkeyCredentialId).trim();
+      const existingOwner = await sql`
+        SELECT id, name FROM event_participants 
+        WHERE passkey_credential_id = ${cleanCredId} AND id != ${state.participantId}
+        LIMIT 1;
+      `;
+      if (existingOwner && existingOwner.length > 0) {
+        console.error(
+          `Security violation: Attempted cross-participant passkey assignment of credential ${cleanCredId} from ${existingOwner[0].id} to ${state.participantId}`
+        );
+        throw new Error(
+          `Cross-participant credential reuse blocked: passkey is already bound to participant ${existingOwner[0].id}`
+        );
+      }
+    }
+
+    // 2. Ensure participant's cryptographic security identity exists
+    const cryptoModule = await import("crypto");
+    const secId = cryptoModule
+      .createHmac("sha256", process.env.SESSION_SECRET || "SantaMagic2024_Round7_FinalClean_v7_Production_Strict")
+      .update(`identity:${state.participantId}:${state.name || "clean"}`)
+      .digest("hex");
+
+    const safeIso = (d: any): string | null => {
+      if (!d) return null;
+      try {
+        const dt = new Date(d);
+        return isNaN(dt.getTime()) ? null : dt.toISOString();
+      } catch {
+        return null;
+      }
+    };
+    const revealedAtIso = safeIso(state.revealedAt);
+    const passkeyRegisteredAtIso = safeIso(state.passkeyRegisteredAt);
+
     await sql`
       INSERT INTO event_participants (
         id, name, code, code_hash, encrypted_recipient, is_revealed, revealed_at,
         pin_hash, pin_salt, encrypted_with_pin, passkey_credential_id,
-        passkey_public_key, passkey_counter, passkey_registered_at, updated_at
+        passkey_public_key, passkey_counter, passkey_registered_at, security_identity_id, updated_at
       )
       VALUES (
         ${state.participantId}, ${state.name}, '', '', ${state.encryptedRecipient || null},
-        ${Boolean(state.isRevealed)}, ${state.revealedAt || null},
+        ${Boolean(state.isRevealed)}, ${revealedAtIso},
         ${state.pinHash || null}, ${state.pinSalt || null}, ${Boolean(state.encryptedWithPin)},
         ${state.passkeyCredentialId || null}, ${state.passkeyPublicKey || null},
-        ${state.passkeyCounter || 0}, ${state.passkeyRegisteredAt || null}, NOW()
+        ${state.passkeyCounter || 0}, ${passkeyRegisteredAtIso}, ${secId}, NOW()
       )
       ON CONFLICT (id) DO UPDATE
       SET
@@ -548,13 +618,61 @@ export async function savePostgresParticipantState(state: any): Promise<boolean>
         passkey_public_key = EXCLUDED.passkey_public_key,
         passkey_counter = EXCLUDED.passkey_counter,
         passkey_registered_at = EXCLUDED.passkey_registered_at,
+        security_identity_id = COALESCE(event_participants.security_identity_id, EXCLUDED.security_identity_id),
         updated_at = NOW();
     `;
     return true;
   } catch (err) {
     console.error("Database error saving participant state to PostgreSQL:", err);
-    return false;
+    throw err;
   }
+}
+
+/**
+ * Checks whether a WebAuthn passkey credential ID is already owned by any participant in PostgreSQL.
+ */
+export async function getPasskeyCredentialOwner(
+  credentialId: string
+): Promise<{ participantId: string; participantName: string } | null> {
+  const sql = getDbClient();
+  if (!sql || !credentialId) return null;
+  try {
+    const rows = await sql`
+      SELECT id, name FROM event_participants
+      WHERE passkey_credential_id = ${credentialId.trim()}
+      LIMIT 1;
+    `;
+    if (rows && rows.length > 0) {
+      return {
+        participantId: String(rows[0].id),
+        participantName: String(rows[0].name),
+      };
+    }
+  } catch (err) {
+    console.error("Database error checking passkey credential owner:", err);
+  }
+  return null;
+}
+
+/**
+ * Retrieves a participant's immutable cryptographic security identity from PostgreSQL.
+ */
+export async function getParticipantSecurityIdentity(participantId: string): Promise<string | null> {
+  const sql = getDbClient();
+  if (!sql || !participantId) return null;
+  try {
+    const rows = await sql`
+      SELECT security_identity_id FROM event_participants
+      WHERE id = ${participantId}
+      LIMIT 1;
+    `;
+    if (rows && rows.length > 0 && rows[0].security_identity_id) {
+      return String(rows[0].security_identity_id);
+    }
+  } catch (err) {
+    console.error("Database error fetching security identity:", err);
+  }
+  return null;
 }
 
 /**

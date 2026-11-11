@@ -25,9 +25,10 @@ export function generateServerDeviceId(): string {
 
 export function setSessionCookie(
   response: { cookies: { set: (name: string, value: string, options: any) => void } },
-  participantId: string
+  participantId: string,
+  deviceId?: string
 ) {
-  const token = createSessionToken(participantId, SESSION_SECRET);
+  const token = createSessionToken(participantId, SESSION_SECRET, deviceId);
   response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -86,17 +87,18 @@ export function clearSessionCookie(response: {
   }
 }
 
-export function getSessionFromRequest(req: NextRequest): { participantId: string } | null {
+export function getSessionFromRequest(req: NextRequest): { participantId: string; deviceId?: string } | null {
+  const deviceId = getDeviceIdFromRequest(req);
   const cookie = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!cookie) {
     const authHeader = req.headers.get("authorization");
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
-      return verifySessionToken(token, SESSION_SECRET);
+      return verifySessionToken(token, SESSION_SECRET, deviceId);
     }
     return null;
   }
-  return verifySessionToken(cookie, SESSION_SECRET);
+  return verifySessionToken(cookie, SESSION_SECRET, deviceId);
 }
 
 export function getDeviceIdFromRequest(req: NextRequest): string {

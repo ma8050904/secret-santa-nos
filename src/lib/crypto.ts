@@ -120,25 +120,33 @@ export function generateRandomSalt(): string {
 }
 
 /**
- * Cryptographic session token generation (HMAC-SHA256 signed)
+ * Cryptographic session token generation (HMAC-SHA256 signed).
+ * Binds participantId and optionally deviceId, timestamp, and cryptographic nonce.
  */
-export function createSessionToken(participantId: string, secret: string): string {
+export function createSessionToken(
+  participantId: string,
+  secret: string,
+  deviceId?: string
+): string {
   const timestamp = Date.now();
   const nonce = crypto.randomBytes(8).toString("hex");
-  const payload = `${participantId}:${timestamp}:${nonce}`;
+  const devId = deviceId ? deviceId.trim().toLowerCase() : "";
+  const payload = `${participantId}:${devId}:${timestamp}:${nonce}`;
   const payloadB64 = Buffer.from(payload, "utf8").toString("base64url");
   const signature = crypto.createHmac("sha256", secret).update(payloadB64).digest("base64url");
   return `${payloadB64}.${signature}`;
 }
 
 /**
- * Cryptographic session token verification
+ * Cryptographic session token verification.
+ * Verifies HMAC signature, lifetime, and bound device ID.
  */
 export function verifySessionToken(
   token: string,
   secret: string,
+  expectedDeviceId?: string,
   maxAgeMs = 7 * 24 * 60 * 60 * 1000 // 7 days
-): { participantId: string } | null {
+): { participantId: string; deviceId?: string } | null {
   if (!token || !token.includes(".")) {
     return null;
   }
@@ -152,14 +160,35 @@ export function verifySessionToken(
 
   try {
     const payload = Buffer.from(payloadB64, "base64url").toString("utf8");
-    const [participantId, timestampStr] = payload.split(":");
-    const timestamp = parseInt(timestampStr, 10);
+    const parts = payload.split(":");
+    let participantId: string;
+    let boundDeviceId = "";
+    let timestamp: number;
+
+    if (parts.length === 4) {
+      // Modern format: participantId:boundDeviceId:timestamp:nonce
+      participantId = parts[0];
+      boundDeviceId = parts[1];
+      timestamp = parseInt(parts[2], 10);
+    } else if (parts.length === 3) {
+      // Legacy format: participantId:timestamp:nonce
+      participantId = parts[0];
+      timestamp = parseInt(parts[1], 10);
+    } else {
+      return null;
+    }
 
     if (isNaN(timestamp) || Date.now() - timestamp > maxAgeMs) {
       return null;
     }
 
-    return { participantId };
+    if (boundDeviceId && expectedDeviceId) {
+      if (boundDeviceId !== expectedDeviceId.trim().toLowerCase()) {
+        return null;
+      }
+    }
+
+    return { participantId, deviceId: boundDeviceId || undefined };
   } catch {
     return null;
   }

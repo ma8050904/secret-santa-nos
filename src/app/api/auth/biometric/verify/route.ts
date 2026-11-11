@@ -15,6 +15,7 @@ import { getWebAuthnRpDetails } from "@/lib/admin-auth";
 import {
   setSessionCookie,
   setDeviceCookie,
+  getSessionFromRequest,
   getDeviceIdFromRequest,
   getHardwareFingerprintFromRequest,
 } from "@/lib/session";
@@ -50,6 +51,18 @@ export async function handleBiometricVerify(
         {
           success: false,
           error: `This device is officially registered to ${existingBinding.participantName}. Accessing other accounts from this device is not permitted.`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // Session Lock: Prevent switching participant identity within an existing authenticated session
+    const existingSession = getSessionFromRequest(req);
+    if (existingSession && existingSession.participantId !== participantId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "This session is locked to an authenticated participant account. Switching participants is not permitted.",
         },
         { status: 403 }
       );
@@ -120,9 +133,10 @@ export async function handleBiometricVerify(
       });
 
       if (!result.success || !result.participant) {
+        const isReuse = result.error?.toLowerCase().includes("cross-participant") || result.error?.toLowerCase().includes("already registered");
         return NextResponse.json(
           { success: false, error: result.error || "Failed to register credential." },
-          { status: 400 }
+          { status: isReuse ? 403 : 400 }
         );
       }
 
@@ -153,7 +167,7 @@ export async function handleBiometricVerify(
       });
 
       // Set session & device cookies
-      setSessionCookie(response, participantId);
+      setSessionCookie(response, participantId, deviceId);
       setDeviceCookie(response, deviceId);
 
       return response;
@@ -166,6 +180,18 @@ export async function handleBiometricVerify(
         return NextResponse.json(
           { success: false, error: "No passkey registered for this participant." },
           { status: 404 }
+        );
+      }
+
+      // Cross-Participant Isolation Gate:
+      // If client attempts to authenticate using a credential ID that does not belong to this participant, reject with HTTP 403
+      if (clientResponse.id && status.passkeyCredentialId && clientResponse.id !== status.passkeyCredentialId) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Cross-participant credential reuse rejected. This passkey does not belong to this participant.",
+          },
+          { status: 403 }
         );
       }
 
@@ -225,7 +251,7 @@ export async function handleBiometricVerify(
       });
 
       // Set session & device cookies
-      setSessionCookie(response, participantId);
+      setSessionCookie(response, participantId, deviceId);
       setDeviceCookie(response, deviceId);
 
       return response;
