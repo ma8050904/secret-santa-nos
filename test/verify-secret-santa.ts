@@ -11,6 +11,8 @@ import {
   FORBIDDEN_EXCLUSION_D,
   MANDATORY_DIRECTED_GIVER_2,
   MANDATORY_DIRECTED_RECIPIENT_2,
+  MANDATORY_DIRECTED_GIVER_3,
+  MANDATORY_DIRECTED_RECIPIENT_3,
   SUBGROUP_20_IDS,
   SUBGROUP_20_ID_SET,
 } from "../src/lib/derangement";
@@ -179,11 +181,16 @@ async function runTests() {
     `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_C} and ${FORBIDDEN_EXCLUSION_D} are NOT assigned to each other`
   );
 
-  // 5. Mandatory directed assignment: Diana 👩‍🏫🛘 -> Mohammad Alshourati
+  // 5. Mandatory directed assignments: Diana 👩‍🏫🛘 -> Mohammad Alshourati & Hamza Darawi -> Zeina Darawi
   const dianaRecipient = decryptedMap.get(MANDATORY_DIRECTED_GIVER_2);
   assert(
     dianaRecipient === MANDATORY_DIRECTED_RECIPIENT_2,
     `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_2} gives to ${MANDATORY_DIRECTED_RECIPIENT_2}`
+  );
+  const hamzaRecipient = decryptedMap.get(MANDATORY_DIRECTED_GIVER_3);
+  assert(
+    hamzaRecipient === MANDATORY_DIRECTED_RECIPIENT_3,
+    `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_3} gives to ${MANDATORY_DIRECTED_RECIPIENT_3}`
   );
 
   // 6. Roster swap verification: Maysoon removed, Fadi in Subgroup 24, Muneer⛪️ in Remaining 32
@@ -206,21 +213,22 @@ async function runTests() {
   }
   assert(subCrossEdges === 0, `Designated Subgroup is completely isolated (0 edges cross between 24-subgroup and remaining ${PARTICIPANTS.length - SUBGROUP_20_IDS.length})`);
 
-  // 8. Zeina Darawi & Hamza Darawi restriction removed (verify draw allows Zeina -> Hamza when present)
-  let observedZeinaHamzaAllowed = false;
+  // 8. Verify Hamza Darawi -> Zeina Darawi holds consistently across 300 constrained draws
+  let allTrialsMatchedHamzaZeina = true;
   for (let trial = 0; trial < 300; trial++) {
     const sample = generateConstrainedSecretSantaDraw(PARTICIPANTS);
     const sampleCheck = validateConstrainedSecretSantaDraw(PARTICIPANTS, sample);
     if (!sampleCheck.valid) {
       assert(false, `Sample constrained draw ${trial} failed validation: ${sampleCheck.reason}`);
+      allTrialsMatchedHamzaZeina = false;
       break;
     }
-    if (sample.some((a) => (a.giverName === "Zeina Darawi" && a.recipientName === "Hamza Darawi") || (a.giverName === "Hamza Darawi" && a.recipientName === "Zeina Darawi"))) {
-      observedZeinaHamzaAllowed = true;
+    if (!sample.some((a) => a.giverName === MANDATORY_DIRECTED_GIVER_3 && a.recipientName === MANDATORY_DIRECTED_RECIPIENT_3)) {
+      allTrialsMatchedHamzaZeina = false;
       break;
     }
   }
-  assert(observedZeinaHamzaAllowed, "Zeina Darawi and Hamza Darawi exclusion is removed and valid draws allow pairing");
+  assert(allTrialsMatchedHamzaZeina, "Hamza Darawi -> Zeina Darawi enforced across all 300 constrained sample draws");
 
   // 9. Mohammad Alshourati is in Subgroup and not self-assigned
   assert(shouratiRecipient !== "Mohammad Alshourati", "Mohammad Alshourati is not self-assigned");

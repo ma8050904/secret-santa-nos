@@ -26,6 +26,8 @@ import {
   FORBIDDEN_EXCLUSION_D,
   MANDATORY_DIRECTED_GIVER_2,
   MANDATORY_DIRECTED_RECIPIENT_2,
+  MANDATORY_DIRECTED_GIVER_3,
+  MANDATORY_DIRECTED_RECIPIENT_3,
 } from "../src/lib/derangement";
 import { decryptRecipient } from "../src/lib/crypto";
 
@@ -164,9 +166,11 @@ async function runRegenerateFullDrawAudit() {
   assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_D), FORBIDDEN_EXCLUSION_C, "Mohammad does NOT give to Raghad");
   console.log("  ✅ PASS: Exclusion rule verified: Raghad Al-Shobaki ⇎ Mohammad Alshourati.");
 
-  // Directed rule: Diana -> Mohammad
+  // Directed rules: Diana -> Mohammad & Hamza Darawi -> Zeina Darawi
   assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_2), MANDATORY_DIRECTED_RECIPIENT_2, "Diana gives to Mohammad");
   console.log("  ✅ PASS: Directed pairing verified: Diana 👩‍🏫🛘 → Mohammad Alshourati.");
+  assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_3), MANDATORY_DIRECTED_RECIPIENT_3, "Hamza Darawi gives to Zeina Darawi");
+  console.log("  ✅ PASS: Directed pairing verified: Hamza Darawi → Zeina Darawi.");
 
   // Swapped roster check: Fadi in Subgroup 24, Muneer⛪️ in Remaining 32, Maysoon absent
   const fadiP = PARTICIPANTS.find((p) => p.name === "Fadi 👨‍🏫📖")!;

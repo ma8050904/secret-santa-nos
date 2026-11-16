@@ -20,6 +20,8 @@ export const FORBIDDEN_EXCLUSION_D = "Mohammad Alshourati";
 
 export const MANDATORY_DIRECTED_GIVER_2 = "Diana 👩‍🏫🛘";
 export const MANDATORY_DIRECTED_RECIPIENT_2 = "Mohammad Alshourati";
+export const MANDATORY_DIRECTED_GIVER_3 = "Hamza Darawi";
+export const MANDATORY_DIRECTED_RECIPIENT_3 = "Zeina Darawi";
 
 // Canonical Designated Subgroup (24 participants: Fadi moved into Subgroup 24 replacing Maysoon; Muneer⛪️ in Remaining 32)
 export const SUBGROUP_20_IDS = [
@@ -121,6 +123,7 @@ export function validateDerangement(
  * 3. Mandatory reciprocal pair: Ghazal Baqleh <-> George Karkar.
  * 4. Mandatory mutual exclusion: Raghad Al-Shobaki cannot give to or receive from Mohammad Alshourati.
  * 5. Mandatory directed assignment: Diana 👩‍🏫🛘 gives to Mohammad Alshourati.
+ * 6. Mandatory directed assignment: Hamza Darawi gives to Zeina Darawi.
  */
 export function validateConstrainedSecretSantaDraw(
   participants: readonly ParticipantItem[],
@@ -191,6 +194,14 @@ export function validateConstrainedSecretSantaDraw(
     return {
       valid: false,
       reason: `Mandatory directed assignment violation: ${MANDATORY_DIRECTED_GIVER_2} must be assigned to ${MANDATORY_DIRECTED_RECIPIENT_2}`,
+    };
+  }
+
+  // 5. Mandatory directed assignment: Hamza Darawi -> Zeina Darawi
+  if (map.has(MANDATORY_DIRECTED_GIVER_3) && map.get(MANDATORY_DIRECTED_GIVER_3) !== MANDATORY_DIRECTED_RECIPIENT_3) {
+    return {
+      valid: false,
+      reason: `Mandatory directed assignment violation: ${MANDATORY_DIRECTED_GIVER_3} must be assigned to ${MANDATORY_DIRECTED_RECIPIENT_3}`,
     };
   }
 
@@ -269,23 +280,28 @@ export function generateSubgroup20Pairs(participants: readonly ParticipantItem[]
   const george = participants.find((p) => p.name === MANDATORY_RECIPROCAL_B);
   const diana = participants.find((p) => p.name === MANDATORY_DIRECTED_GIVER_2);
   const mohammad = participants.find((p) => p.name === MANDATORY_DIRECTED_RECIPIENT_2);
+  const hamza = participants.find((p) => p.name === MANDATORY_DIRECTED_GIVER_3);
+  const zeina = participants.find((p) => p.name === MANDATORY_DIRECTED_RECIPIENT_3);
 
-  if (!ghazal || !george || !diana || !mohammad) {
+  if (!ghazal || !george || !diana || !mohammad || !hamza || !zeina) {
     throw new Error("Mandatory constrained participants missing from designated subgroup roster.");
   }
 
-  // Participants other than Ghazal, George, Diana, and Mohammad
+  // Participants other than Ghazal, George, Diana, Mohammad, Hamza Darawi, and Zeina Darawi
   const others = participants.filter(
     (p) =>
       p.name !== MANDATORY_RECIPROCAL_A &&
       p.name !== MANDATORY_RECIPROCAL_B &&
       p.name !== MANDATORY_DIRECTED_GIVER_2 &&
-      p.name !== MANDATORY_DIRECTED_RECIPIENT_2
+      p.name !== MANDATORY_DIRECTED_RECIPIENT_2 &&
+      p.name !== MANDATORY_DIRECTED_GIVER_3 &&
+      p.name !== MANDATORY_DIRECTED_RECIPIENT_3
   );
 
-  // Composite unit [diana, mohammad] guarantees Diana -> Mohammad; all remaining members are 1-element units
+  // Composite units [diana, mohammad] and [hamza, zeina] guarantee Diana -> Mohammad and Hamza -> Zeina; remaining members are 1-element units
   const units: ParticipantItem[][] = [
     [diana, mohammad],
+    [hamza, zeina],
     ...others.map((p) => [p]),
   ];
 
@@ -390,7 +406,7 @@ function generateDerangementCyclePairs(participants: readonly ParticipantItem[])
 /**
  * Generates a constrained Secret Santa draw satisfying all requirements:
  * If full roster is given:
- * - Subgroup 1 (24 participants, includes Fadi 👨‍🏫📖): closed internal draw, Ghazal <-> George reciprocal, Raghad <-> Mohammad exclusion, Diana -> Mohammad.
+ * - Subgroup 1 (24 participants, includes Fadi 👨‍🏫📖): closed internal draw, Ghazal <-> George reciprocal, Raghad <-> Mohammad exclusion, Diana -> Mohammad, Hamza -> Zeina.
  * - Subgroup 2 (32 participants, includes Muneer⛪️): closed internal derangement cycle.
  */
 export function generateConstrainedSecretSantaDraw(
