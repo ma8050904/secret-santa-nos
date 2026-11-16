@@ -634,14 +634,16 @@ export async function saveEventState(state: EventState): Promise<void> {
 export async function getParticipantRuntimeState(
   participantId: string
 ): Promise<ParticipantRuntimeState | null> {
-  // Check in-memory runtime cache
-  if (runtimeParticipantCache.has(participantId)) {
+  // 0. Primary: PostgreSQL Transactional Store (always read authoritative DB row across serverless Lambdas)
+  const { isPostgresConfigured, getPostgresParticipantState } = await import("./db");
+  const usePostgres = isPostgresConfigured() && !process.env.STORAGE_FILE_PATH;
+
+  // Check in-memory runtime cache only for non-Postgres storage backends
+  if (!usePostgres && runtimeParticipantCache.has(participantId)) {
     return runtimeParticipantCache.get(participantId)!;
   }
 
-  // 0. Primary: PostgreSQL Transactional Store
-  const { isPostgresConfigured, getPostgresParticipantState } = await import("./db");
-  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+  if (usePostgres) {
     try {
       const pgParticipant = await getPostgresParticipantState(participantId);
       if (pgParticipant) {
@@ -651,6 +653,7 @@ export async function getParticipantRuntimeState(
         if (pgParticipant.passkeyCredentialId) passkeyParticipantIds.add(participantId);
         return pgParticipant;
       }
+      runtimeParticipantCache.delete(participantId);
     } catch (pgErr) {
       console.error("Critical: PostgreSQL participant fetch error:", pgErr);
       if (process.env.NODE_ENV === "production") {
@@ -1482,8 +1485,8 @@ export interface AdminSafeState {
  */
 export async function getAdminSafeState(): Promise<AdminSafeState> {
   const t0 = Date.now();
-  const state = await getEventState();
-  await syncMarkers();
+  const state = await getEventState(true);
+  await syncMarkers(true);
   const latencyMs = Math.max(Date.now() - t0, 1);
 
   const revealedCount = state.participants.filter(
@@ -1587,8 +1590,11 @@ export async function getDeviceBinding(
     // fallback
   }
 
-  // Check in-memory cache
-  if (deviceBindingCache.has(cleanId)) {
+  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
+  const usePostgres = isPostgresConfigured() && !process.env.STORAGE_FILE_PATH;
+
+  // Check in-memory cache only for non-Postgres backends (serverless Lambdas must see DB unbinds immediately)
+  if (!usePostgres && deviceBindingCache.has(cleanId)) {
     const cached = deviceBindingCache.get(cleanId)!;
     if (cached.resetVersion && cached.resetVersion < resetVersion) {
       deviceBindingCache.delete(cleanId);
@@ -1598,8 +1604,7 @@ export async function getDeviceBinding(
   }
 
   // 0. Primary: PostgreSQL Transactional Store
-  const { isPostgresConfigured, getPostgresDeviceOrHardwareBinding } = await import("./db");
-  if (isPostgresConfigured() && !process.env.STORAGE_FILE_PATH) {
+  if (usePostgres) {
     try {
       const pg = await getPostgresDeviceOrHardwareBinding(cleanId, null, resetVersion);
       if (pg) {
@@ -1623,6 +1628,8 @@ export async function getDeviceBinding(
         deviceBindingCache.set(cleanId, record);
         return record;
       }
+      deviceBindingCache.delete(cleanId);
+      return null;
     } catch (pgErr) {
       console.warn("Notice: PostgreSQL device fetch attempt:", pgErr);
     }

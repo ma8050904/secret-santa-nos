@@ -182,19 +182,26 @@ export async function checkDistributedRateLimit(
         attempts = CASE
           WHEN distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until > ${now}
             THEN distributed_rate_limits.attempts
-          WHEN distributed_rate_limits.first_attempt_at < ${windowStart}
+          WHEN (distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until <= ${now})
+            OR distributed_rate_limits.first_attempt_at < ${windowStart}
             THEN 1
           ELSE distributed_rate_limits.attempts + 1
         END,
         first_attempt_at = CASE
-          WHEN distributed_rate_limits.first_attempt_at < ${windowStart}
+          WHEN distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until > ${now}
+            THEN distributed_rate_limits.first_attempt_at
+          WHEN (distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until <= ${now})
+            OR distributed_rate_limits.first_attempt_at < ${windowStart}
             THEN ${now}
           ELSE distributed_rate_limits.first_attempt_at
         END,
         blocked_until = CASE
           WHEN distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until > ${now}
             THEN distributed_rate_limits.blocked_until
-          WHEN distributed_rate_limits.attempts >= ${maxAttempts}
+          WHEN distributed_rate_limits.blocked_until IS NOT NULL AND distributed_rate_limits.blocked_until <= ${now}
+            THEN NULL
+          WHEN distributed_rate_limits.first_attempt_at >= ${windowStart}
+            AND distributed_rate_limits.attempts >= ${maxAttempts}
             THEN ${now + blockDurationMs}
           ELSE NULL
         END,

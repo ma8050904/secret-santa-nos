@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -73,75 +74,56 @@ function categorizeError(status: number, message: string): string {
   return `API error (${status})`;
 }
 
-// Ordered list of models to try (primary requested model first, followed by high-speed failovers)
+// Ordered list of models to try (fastest reliable models first, followed by failovers)
 const CANDIDATE_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash",
 ];
 
 const MODEL_TIMEOUTS: Record<string, number> = {
-  "gemini-3.8-flash": 3000,
-  "gemini-3.5-flash": 3000,
-  "gemini-3.5-flash-lite": 8000,
-  "gemini-3.1-flash-lite": 8000,
+  "gemini-3.5-flash-lite": 6000,
+  "gemini-3.1-flash-lite": 6000,
+  "gemini-3.8-flash": 4000,
+  "gemini-3.5-flash": 4000,
 };
 
-const MODEL_THINKING_LEVELS: Record<string, string> = {
-  "gemini-3.8-flash": "LOW",
-  "gemini-3.5-flash": "LOW",
-  "gemini-3.5-flash-lite": "MINIMAL",
-  "gemini-3.1-flash-lite": "MINIMAL",
+const MODEL_THINKING_LEVELS: Record<string, ThinkingLevel> = {
+  "gemini-3.5-flash-lite": ThinkingLevel.MINIMAL,
+  "gemini-3.1-flash-lite": ThinkingLevel.MINIMAL,
+  "gemini-3.8-flash": ThinkingLevel.LOW,
+  "gemini-3.5-flash": ThinkingLevel.LOW,
 };
 
 async function callGenerateContent(
+  genAI: GoogleGenAI,
   model: string,
   systemInstruction: string,
   contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }>,
-  apiKey: string,
   timeoutMs = 6000
 ): Promise<{ text: string | null; errorCategory?: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await genAI.models.generateContent({
+      model,
+      contents,
+      config: {
+        systemInstruction,
+        temperature: 0.8,
+        maxOutputTokens: 450,
+        thinkingConfig: {
+          thinkingLevel: MODEL_THINKING_LEVELS[model] || ThinkingLevel.LOW,
+        },
+        abortSignal: controller.signal,
       },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemInstruction }],
-        },
-        contents,
-        generationConfig: {
-          temperature: 0.8,
-          maxOutputTokens: 450,
-          thinkingConfig: {
-            thinkingLevel: MODEL_THINKING_LEVELS[model] || "LOW",
-          },
-        },
-      }),
-      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      const rawMsg = errJson?.error?.message || res.statusText || "";
-      const category = categorizeError(res.status, rawMsg);
-      console.warn(`[Santa AI] ${model} failed -> ${category} (${res.status}): ${rawMsg.slice(0, 100)}`);
-      return { text: null, errorCategory: category };
-    }
-
-    const data = await res.json();
-    const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
+    const candidateText = response.text;
     if (typeof candidateText === "string" && candidateText.trim().length > 0) {
       return { text: candidateText.trim() };
     }
@@ -151,8 +133,14 @@ async function callGenerateContent(
   } catch (err: unknown) {
     clearTimeout(timeoutId);
     const isTimeout = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-    const category = isTimeout ? "Timeout" : "Network error";
-    console.warn(`[Santa AI] ${model} call error -> ${category}: ${err instanceof Error ? err.message : String(err)}`);
+    if (isTimeout) {
+      console.warn(`[Santa AI] ${model} call error -> Timeout`);
+      return { text: null, errorCategory: "Timeout" };
+    }
+    const status = typeof (err as { status?: unknown })?.status === "number" ? (err as { status: number }).status : 0;
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const category = status ? categorizeError(status, rawMsg) : "Network error";
+    console.warn(`[Santa AI] ${model} failed -> ${category} (${status || "err"}): ${rawMsg.slice(0, 120)}`);
     return { text: null, errorCategory: category };
   }
 }
@@ -223,7 +211,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Cascading failover loop: tries candidate models in order
+    // Cascading failover loop: respects Netlify AI Gateway GOOGLE_GEMINI_BASE_URL when injected
+    const genAI = new GoogleGenAI({});
     let generatedReply: string | null = null;
     let selectedModel = "";
     const failureLog: Array<{ model: string; category: string }> = [];
@@ -231,10 +220,10 @@ export async function POST(req: NextRequest) {
     for (const candidate of CANDIDATE_MODELS) {
       const timeoutMs = MODEL_TIMEOUTS[candidate] || 6000;
       const result = await callGenerateContent(
+        genAI,
         candidate,
         SANTA_SYSTEM_INSTRUCTION,
         formattedContents,
-        apiKey,
         timeoutMs
       );
 
