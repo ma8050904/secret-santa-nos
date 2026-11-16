@@ -7,12 +7,8 @@ import {
   validateConstrainedSecretSantaDraw,
   MANDATORY_RECIPROCAL_A,
   MANDATORY_RECIPROCAL_B,
-  FORBIDDEN_EXCLUSION_A,
-  FORBIDDEN_EXCLUSION_B,
   FORBIDDEN_EXCLUSION_C,
   FORBIDDEN_EXCLUSION_D,
-  MANDATORY_DIRECTED_GIVER_1,
-  MANDATORY_DIRECTED_RECIPIENT_1,
   MANDATORY_DIRECTED_GIVER_2,
   MANDATORY_DIRECTED_RECIPIENT_2,
   SUBGROUP_20_IDS,
@@ -80,11 +76,11 @@ const EXPECTED_56_NAMES = [
   "Maria Halaseh",
   "Mariana Salkawi",
   "Maya Joy Mahrejian",
-  "Maysoon 🏫",
   "Michael Shamma",
   "Mirna 👩‍🏫🇬🇧",
   "Mohammad Alshourati",
   "Mohammad Darras",
+  "Muneer⛪️",
   "Nardeen Abdallah",
   "Natalie Khacherian",
   "Nishan Nodiznaya",
@@ -175,15 +171,7 @@ async function runTests() {
     `Mandatory reciprocal assignment verified: ${MANDATORY_RECIPROCAL_A} ⇄ ${MANDATORY_RECIPROCAL_B}`
   );
 
-  // 4. Mandatory exclusion 1: Zeina Darawi <-> Hamza Darawi
-  const zeinaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_A);
-  const hamzaRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_B);
-  assert(
-    zeinaRecipient !== FORBIDDEN_EXCLUSION_B && hamzaRecipient !== FORBIDDEN_EXCLUSION_A,
-    `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_A} and ${FORBIDDEN_EXCLUSION_B} are NOT assigned to each other`
-  );
-
-  // 5. Mandatory exclusion 2: Raghad Al-Shobaki <-> Mohammad Alshourati
+  // 4. Mandatory exclusion: Raghad Al-Shobaki <-> Mohammad Alshourati
   const raghadRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_C);
   const shouratiRecipient = decryptedMap.get(FORBIDDEN_EXCLUSION_D);
   assert(
@@ -191,21 +179,21 @@ async function runTests() {
     `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_C} and ${FORBIDDEN_EXCLUSION_D} are NOT assigned to each other`
   );
 
-  // 6. Mandatory directed assignment 1: Maysoon 🏫 -> Qais Al-Hadeed
-  const maysoonRecipient = decryptedMap.get(MANDATORY_DIRECTED_GIVER_1);
-  assert(
-    maysoonRecipient === MANDATORY_DIRECTED_RECIPIENT_1,
-    `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_1} gives to ${MANDATORY_DIRECTED_RECIPIENT_1}`
-  );
-
-  // 7. Mandatory directed assignment 2: Diana 👩‍🏫🛘 -> Mohammad Alshourati
+  // 5. Mandatory directed assignment: Diana 👩‍🏫🛘 -> Mohammad Alshourati
   const dianaRecipient = decryptedMap.get(MANDATORY_DIRECTED_GIVER_2);
   assert(
     dianaRecipient === MANDATORY_DIRECTED_RECIPIENT_2,
     `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_2} gives to ${MANDATORY_DIRECTED_RECIPIENT_2}`
   );
 
-  // 8. Mandatory Subgroup Isolation (24 members in subgroup 1, 32 members in subgroup 2)
+  // 6. Roster swap verification: Maysoon removed, Fadi in Subgroup 24, Muneer⛪️ in Remaining 32
+  assert(!PARTICIPANTS.some((p) => p.name.includes("Maysoon")), "Maysoon 🏫 removed from roster");
+  const fadiParticipant = PARTICIPANTS.find((p) => p.name === "Fadi 👨‍🏫📖");
+  const muneerParticipant = PARTICIPANTS.find((p) => p.name === "Muneer⛪️");
+  assert(Boolean(fadiParticipant && SUBGROUP_20_ID_SET.has(fadiParticipant.id)), "Fadi 👨‍🏫📖 is inside Subgroup 24");
+  assert(Boolean(muneerParticipant && !SUBGROUP_20_ID_SET.has(muneerParticipant.id)), "Muneer⛪️ is inside Remaining 32");
+
+  // 7. Mandatory Subgroup Isolation (24 members in subgroup 1, 32 members in subgroup 2)
   let subCrossEdges = 0;
   for (const [giver, rec] of decryptedMap.entries()) {
     const giverP = state.participants.find((p) => p.name === giver)!;
@@ -217,6 +205,22 @@ async function runTests() {
     }
   }
   assert(subCrossEdges === 0, `Designated Subgroup is completely isolated (0 edges cross between 24-subgroup and remaining ${PARTICIPANTS.length - SUBGROUP_20_IDS.length})`);
+
+  // 8. Zeina Darawi & Hamza Darawi restriction removed (verify draw allows Zeina -> Hamza when present)
+  let observedZeinaHamzaAllowed = false;
+  for (let trial = 0; trial < 300; trial++) {
+    const sample = generateConstrainedSecretSantaDraw(PARTICIPANTS);
+    const sampleCheck = validateConstrainedSecretSantaDraw(PARTICIPANTS, sample);
+    if (!sampleCheck.valid) {
+      assert(false, `Sample constrained draw ${trial} failed validation: ${sampleCheck.reason}`);
+      break;
+    }
+    if (sample.some((a) => (a.giverName === "Zeina Darawi" && a.recipientName === "Hamza Darawi") || (a.giverName === "Hamza Darawi" && a.recipientName === "Zeina Darawi"))) {
+      observedZeinaHamzaAllowed = true;
+      break;
+    }
+  }
+  assert(observedZeinaHamzaAllowed, "Zeina Darawi and Hamza Darawi exclusion is removed and valid draws allow pairing");
 
   // 9. Mohammad Alshourati is in Subgroup and not self-assigned
   assert(shouratiRecipient !== "Mohammad Alshourati", "Mohammad Alshourati is not self-assigned");

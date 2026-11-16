@@ -25,8 +25,6 @@ import {
   SUBGROUP_20_IDS,
   MANDATORY_RECIPROCAL_A,
   MANDATORY_RECIPROCAL_B,
-  FORBIDDEN_EXCLUSION_A,
-  FORBIDDEN_EXCLUSION_B,
   FORBIDDEN_EXCLUSION_C,
   FORBIDDEN_EXCLUSION_D,
   AssignmentPair,
@@ -923,7 +921,7 @@ export async function generateAssignments(force = false): Promise<{
 
   return {
     success: true,
-    message: "Constrained Secret Santa draw successfully generated for 48 participants.",
+    message: `Constrained Secret Santa draw successfully generated for ${PARTICIPANTS.length} participants.`,
   };
 }
 
@@ -2801,12 +2799,6 @@ export async function rerollSubgroup20(
     throw new Error("Reciprocal pairing validation failed!");
   }
   if (
-    map.get(FORBIDDEN_EXCLUSION_A) === FORBIDDEN_EXCLUSION_B ||
-    map.get(FORBIDDEN_EXCLUSION_B) === FORBIDDEN_EXCLUSION_A
-  ) {
-    throw new Error("Mutual exclusion validation failed for Zeina and Hamza!");
-  }
-  if (
     map.get(FORBIDDEN_EXCLUSION_C) === FORBIDDEN_EXCLUSION_D ||
     map.get(FORBIDDEN_EXCLUSION_D) === FORBIDDEN_EXCLUSION_C
   ) {
@@ -2992,6 +2984,10 @@ export async function regenerateFullDraw(
     state.masterSalt = newMasterSalt;
     state.participants = newParticipantsState;
     state.deviceResetVersion = (state.deviceResetVersion || 1) + 1;
+    if (targetMode === "constrained") {
+      state.savedOfficialParticipants = undefined;
+      state.savedOfficialMasterSalt = undefined;
+    }
 
     // 4. Save state atomically BEFORE clearing runtime files/caches
     await saveEventState(state);
@@ -3192,11 +3188,31 @@ export async function setDrawMode(
       state.deviceResetVersion = newDeviceResetVersion;
       state.generatedAt = new Date().toISOString();
 
-      if (
-        state.savedOfficialParticipants &&
-        state.savedOfficialParticipants.length === PARTICIPANTS.length &&
-        state.savedOfficialMasterSalt
-      ) {
+      const canRestoreOfficial = (() => {
+        if (
+          !state.savedOfficialParticipants ||
+          state.savedOfficialParticipants.length !== PARTICIPANTS.length ||
+          !state.savedOfficialMasterSalt
+        ) {
+          return false;
+        }
+        const namesMatch = state.savedOfficialParticipants.every(
+          (p, idx) => p.id === PARTICIPANTS[idx]?.id && p.name === PARTICIPANTS[idx]?.name
+        );
+        if (!namesMatch) return false;
+        try {
+          const pairs: AssignmentPair[] = state.savedOfficialParticipants.map((p) => {
+            const recName = decryptRecipient(p.encryptedRecipient!, p.code, state.savedOfficialMasterSalt!);
+            const recP = PARTICIPANTS.find((item) => item.name === recName)!;
+            return { giverId: p.id, giverName: p.name, recipientId: recP.id, recipientName: recP.name };
+          });
+          return validateConstrainedSecretSantaDraw(PARTICIPANTS, pairs).valid;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (canRestoreOfficial && state.savedOfficialParticipants && state.savedOfficialMasterSalt) {
         // Restore official saved participants with reset PINs and reveal status
         state.masterSalt = state.savedOfficialMasterSalt;
         state.participants = state.savedOfficialParticipants.map((p) => ({

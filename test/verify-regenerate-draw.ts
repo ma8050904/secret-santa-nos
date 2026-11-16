@@ -22,12 +22,8 @@ import {
   SUBGROUP_20_ID_SET,
   MANDATORY_RECIPROCAL_A,
   MANDATORY_RECIPROCAL_B,
-  FORBIDDEN_EXCLUSION_A,
-  FORBIDDEN_EXCLUSION_B,
   FORBIDDEN_EXCLUSION_C,
   FORBIDDEN_EXCLUSION_D,
-  MANDATORY_DIRECTED_GIVER_1,
-  MANDATORY_DIRECTED_RECIPIENT_1,
   MANDATORY_DIRECTED_GIVER_2,
   MANDATORY_DIRECTED_RECIPIENT_2,
 } from "../src/lib/derangement";
@@ -163,23 +159,21 @@ async function runRegenerateFullDrawAudit() {
   assert.strictEqual(assignmentMap.get(MANDATORY_RECIPROCAL_B), MANDATORY_RECIPROCAL_A, "George gives to Ghazal");
   console.log("  ✅ PASS: Mandatory reciprocal pairing verified: Ghazal Baqleh ⇄ George Karkar.");
 
-  // Exclusion rule 1
-  assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_A), FORBIDDEN_EXCLUSION_B, "Zeina does NOT give to Hamza");
-  assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_B), FORBIDDEN_EXCLUSION_A, "Hamza does NOT give to Zeina");
-  console.log("  ✅ PASS: Exclusion rule verified: Zeina Darawi ↮ Hamza Darawi.");
-
-  // Exclusion rule 2
+  // Exclusion rule: Raghad ⇎ Mohammad
   assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_C), FORBIDDEN_EXCLUSION_D, "Raghad does NOT give to Mohammad");
   assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_D), FORBIDDEN_EXCLUSION_C, "Mohammad does NOT give to Raghad");
-  console.log("  ✅ PASS: Exclusion rule verified: Raghad Al-Shobaki ↮ Mohammad Alshourati.");
+  console.log("  ✅ PASS: Exclusion rule verified: Raghad Al-Shobaki ⇎ Mohammad Alshourati.");
 
-  // Directed rule 1
-  assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_1), MANDATORY_DIRECTED_RECIPIENT_1, "Maysoon gives to Qais");
-  console.log("  ✅ PASS: Directed pairing verified: Maysoon 🏫 → Qais Al-Hadeed.");
-
-  // Directed rule 2
+  // Directed rule: Diana -> Mohammad
   assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_2), MANDATORY_DIRECTED_RECIPIENT_2, "Diana gives to Mohammad");
   console.log("  ✅ PASS: Directed pairing verified: Diana 👩‍🏫🛘 → Mohammad Alshourati.");
+
+  // Swapped roster check: Fadi in Subgroup 24, Muneer⛪️ in Remaining 32, Maysoon absent
+  const fadiP = PARTICIPANTS.find((p) => p.name === "Fadi 👨‍🏫📖")!;
+  const muneerP = PARTICIPANTS.find((p) => p.name === "Muneer⛪️")!;
+  assert.ok(fadiP && SUBGROUP_20_ID_SET.has(fadiP.id as any), "Fadi is inside Subgroup 24");
+  assert.ok(muneerP && !SUBGROUP_20_ID_SET.has(muneerP.id as any), "Muneer⛪️ is inside Remaining 32");
+  console.log("  ✅ PASS: Roster swap verified (Fadi 👨‍🏫📖 in Subgroup 24, Muneer⛪️ in Remaining 32).");
 
   // Subgroup 24 isolation
   for (const a of assignments) {

@@ -231,10 +231,11 @@ async function runTests() {
     const mohammad = state.participants.find((p) => p.name === "Mohammad Alshourati");
     assert(Boolean(raghad && mohammad), "Raghad and Mohammad exist in roster");
 
-    // Directed: Maysoon -> Qais
-    const maysoon = state.participants.find((p) => p.name.includes("Maysoon"));
-    const qais = state.participants.find((p) => p.name === "Qais Al-Hadeed");
-    assert(Boolean(maysoon && qais), "Maysoon and Qais exist in roster");
+    // Roster swap check: Muneer⛪️ and Fadi 👨‍🏫📖 exist, Maysoon removed
+    const muneer = state.participants.find((p) => p.name === "Muneer⛪️");
+    const fadi = state.participants.find((p) => p.name.includes("Fadi"));
+    assert(Boolean(muneer && fadi), "Muneer⛪️ and Fadi exist in roster");
+    assert(!state.participants.some((p) => p.name.includes("Maysoon")), "Maysoon removed from roster");
 
     // Directed: Diana -> Mohammad
     const diana = state.participants.find((p) => p.name.includes("Diana"));
