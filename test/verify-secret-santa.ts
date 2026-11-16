@@ -13,6 +13,10 @@ import {
   MANDATORY_DIRECTED_RECIPIENT_2,
   MANDATORY_DIRECTED_GIVER_3,
   MANDATORY_DIRECTED_RECIPIENT_3,
+  MANDATORY_DIRECTED_GIVER_4,
+  MANDATORY_DIRECTED_RECIPIENT_4,
+  FORBIDDEN_EXCLUSION_MAYA_PERSON,
+  FORBIDDEN_EXCLUSION_MAYA_GROUP,
   SUBGROUP_20_IDS,
   SUBGROUP_20_ID_SET,
 } from "../src/lib/derangement";
@@ -192,6 +196,17 @@ async function runTests() {
     hamzaRecipient === MANDATORY_DIRECTED_RECIPIENT_3,
     `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_3} gives to ${MANDATORY_DIRECTED_RECIPIENT_3}`
   );
+  const mayaRecipient = decryptedMap.get(MANDATORY_DIRECTED_GIVER_4);
+  assert(
+    mayaRecipient === MANDATORY_DIRECTED_RECIPIENT_4,
+    `Mandatory directed assignment verified: ${MANDATORY_DIRECTED_GIVER_4} gives to ${MANDATORY_DIRECTED_RECIPIENT_4}`
+  );
+  for (const excludedName of FORBIDDEN_EXCLUSION_MAYA_GROUP) {
+    assert(
+      mayaRecipient !== excludedName && decryptedMap.get(excludedName) !== FORBIDDEN_EXCLUSION_MAYA_PERSON,
+      `Mandatory exclusion verified: ${FORBIDDEN_EXCLUSION_MAYA_PERSON} and ${excludedName} are NOT assigned to each other`
+    );
+  }
 
   // 6. Roster swap verification: Maysoon removed, Fadi in Subgroup 24, Muneer⛪️ in Remaining 32
   assert(!PARTICIPANTS.some((p) => p.name.includes("Maysoon")), "Maysoon 🏫 removed from roster");
@@ -213,22 +228,38 @@ async function runTests() {
   }
   assert(subCrossEdges === 0, `Designated Subgroup is completely isolated (0 edges cross between 24-subgroup and remaining ${PARTICIPANTS.length - SUBGROUP_20_IDS.length})`);
 
-  // 8. Verify Hamza Darawi -> Zeina Darawi holds consistently across 300 constrained draws
-  let allTrialsMatchedHamzaZeina = true;
+  // 8. Verify Hamza -> Zeina, Maya -> Natalie, and Maya exclusions hold consistently across 300 constrained draws
+  let allTrialsValidAndEnforced = true;
   for (let trial = 0; trial < 300; trial++) {
     const sample = generateConstrainedSecretSantaDraw(PARTICIPANTS);
     const sampleCheck = validateConstrainedSecretSantaDraw(PARTICIPANTS, sample);
     if (!sampleCheck.valid) {
       assert(false, `Sample constrained draw ${trial} failed validation: ${sampleCheck.reason}`);
-      allTrialsMatchedHamzaZeina = false;
+      allTrialsValidAndEnforced = false;
       break;
     }
-    if (!sample.some((a) => a.giverName === MANDATORY_DIRECTED_GIVER_3 && a.recipientName === MANDATORY_DIRECTED_RECIPIENT_3)) {
-      allTrialsMatchedHamzaZeina = false;
+    const hasHamzaZeina = sample.some(
+      (a) => a.giverName === MANDATORY_DIRECTED_GIVER_3 && a.recipientName === MANDATORY_DIRECTED_RECIPIENT_3
+    );
+    const hasMayaNatalie = sample.some(
+      (a) => a.giverName === MANDATORY_DIRECTED_GIVER_4 && a.recipientName === MANDATORY_DIRECTED_RECIPIENT_4
+    );
+    const violatesMayaGroup = sample.some(
+      (a) =>
+        (a.giverName === FORBIDDEN_EXCLUSION_MAYA_PERSON &&
+          (FORBIDDEN_EXCLUSION_MAYA_GROUP as readonly string[]).includes(a.recipientName)) ||
+        (a.recipientName === FORBIDDEN_EXCLUSION_MAYA_PERSON &&
+          (FORBIDDEN_EXCLUSION_MAYA_GROUP as readonly string[]).includes(a.giverName))
+    );
+    if (!hasHamzaZeina || !hasMayaNatalie || violatesMayaGroup) {
+      allTrialsValidAndEnforced = false;
       break;
     }
   }
-  assert(allTrialsMatchedHamzaZeina, "Hamza Darawi -> Zeina Darawi enforced across all 300 constrained sample draws");
+  assert(
+    allTrialsValidAndEnforced,
+    "Hamza -> Zeina, Maya -> Natalie, and Maya <-> {Yousef Jahshan, Ibrahim Jahshan, Ibrahim Hanin, Issa Hijazeen} exclusions enforced across all 300 sample draws"
+  );
 
   // 9. Mohammad Alshourati is in Subgroup and not self-assigned
   assert(shouratiRecipient !== "Mohammad Alshourati", "Mohammad Alshourati is not self-assigned");

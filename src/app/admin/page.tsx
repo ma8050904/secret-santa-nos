@@ -1425,7 +1425,7 @@ export default function AdminDashboardPage() {
 
                   <div className="my-4 space-y-2.5 text-xs text-emerald-100/90 leading-relaxed rounded-2xl border border-red-500/30 bg-red-950/30 p-4">
                     <p>• <strong>Encrypted Backup:</strong> An automated backup is created immediately before any modifications to the draw.</p>
-                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 56} participants while adhering strictly to all constraints (Subgroup 24 & Remaining 32, Ghazal ⇄ George, Diana ➔ Mohammad, Hamza ➔ Zeina, and Raghad ⇎ Mohammad).</p>
+                    <p>• <strong>Full Redistribution:</strong> Regenerates pairing assignments for all {state?.totalParticipants || 56} participants while adhering strictly to all constraints (Subgroup 24 & Remaining 32, Ghazal ⇄ George, Diana ➔ Mohammad, Hamza ➔ Zeina, Maya ➔ Natalie, Raghad ⇎ Mohammad, and Maya ⇎ Yousef Jahshan / Ibrahim Jahshan / Ibrahim Hanin / Issa Hijazeen).</p>
                     <p>• <strong>Device & Reveal Reset:</strong> Starts a new round with an incremented version number, resets reveals to 0, clears all PINs, and automatically wipes all device bindings together to guarantee full privacy and prevent unauthorized re-use.</p>
                   </div>
 
@@ -1760,7 +1760,7 @@ export default function AdminDashboardPage() {
                       Are you sure you want to restore official rules and special constraints?
                     </p>
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-[11px] text-emerald-200/90 space-y-1">
-                      <p>• Restores directed & constrained pairings (Diana ➔ Mohammad, Hamza ➔ Zeina, Ghazal ⇄ George, Raghad ⇎ Mohammad) and the isolated 24-member group.</p>
+                      <p>• Restores directed & constrained pairings (Diana ➔ Mohammad, Hamza ➔ Zeina, Maya ➔ Natalie, Ghazal ⇄ George, Raghad ⇎ Mohammad, Maya ⇎ Yousef J. / Ibrahim J. / Ibrahim H. / Issa H.) and isolated groups.</p>
                       <p>• Access credentials are reset, ready for the official live gift exchange.</p>
                     </div>
                   </>

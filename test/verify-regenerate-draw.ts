@@ -28,6 +28,10 @@ import {
   MANDATORY_DIRECTED_RECIPIENT_2,
   MANDATORY_DIRECTED_GIVER_3,
   MANDATORY_DIRECTED_RECIPIENT_3,
+  MANDATORY_DIRECTED_GIVER_4,
+  MANDATORY_DIRECTED_RECIPIENT_4,
+  FORBIDDEN_EXCLUSION_MAYA_PERSON,
+  FORBIDDEN_EXCLUSION_MAYA_GROUP,
 } from "../src/lib/derangement";
 import { decryptRecipient } from "../src/lib/crypto";
 
@@ -166,11 +170,18 @@ async function runRegenerateFullDrawAudit() {
   assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_D), FORBIDDEN_EXCLUSION_C, "Mohammad does NOT give to Raghad");
   console.log("  ✅ PASS: Exclusion rule verified: Raghad Al-Shobaki ⇎ Mohammad Alshourati.");
 
-  // Directed rules: Diana -> Mohammad & Hamza Darawi -> Zeina Darawi
+  // Directed & exclusion rules: Diana -> Mohammad, Hamza -> Zeina, Maya -> Natalie, Maya <-> excluded 4
   assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_2), MANDATORY_DIRECTED_RECIPIENT_2, "Diana gives to Mohammad");
   console.log("  ✅ PASS: Directed pairing verified: Diana 👩‍🏫🛘 → Mohammad Alshourati.");
   assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_3), MANDATORY_DIRECTED_RECIPIENT_3, "Hamza Darawi gives to Zeina Darawi");
   console.log("  ✅ PASS: Directed pairing verified: Hamza Darawi → Zeina Darawi.");
+  assert.strictEqual(assignmentMap.get(MANDATORY_DIRECTED_GIVER_4), MANDATORY_DIRECTED_RECIPIENT_4, "Maya Joy Mahrejian gives to Natalie Khacherian");
+  console.log("  ✅ PASS: Directed pairing verified: Maya Joy Mahrejian → Natalie Khacherian.");
+  for (const excludedName of FORBIDDEN_EXCLUSION_MAYA_GROUP) {
+    assert.notStrictEqual(assignmentMap.get(FORBIDDEN_EXCLUSION_MAYA_PERSON), excludedName, `Maya does NOT give to ${excludedName}`);
+    assert.notStrictEqual(assignmentMap.get(excludedName), FORBIDDEN_EXCLUSION_MAYA_PERSON, `${excludedName} does NOT give to Maya`);
+  }
+  console.log("  ✅ PASS: Maya exclusion verified against Yousef Jahshan, Ibrahim Jahshan, Ibrahim Hanin, Issa Hijazeen.");
 
   // Swapped roster check: Fadi in Subgroup 24, Muneer⛪️ in Remaining 32, Maysoon absent
   const fadiP = PARTICIPANTS.find((p) => p.name === "Fadi 👨‍🏫📖")!;
